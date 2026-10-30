@@ -5,7 +5,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use chur_catalog::paths::VaultRoot;
-use chur_core::{Id, Result};
+use chur_core::{ChurStatus, Id, Result};
 use chur_crypto::{Key, Nonce};
 use chur_format::constants::StreamKind;
 use chur_format::container::{
@@ -143,20 +143,43 @@ fn only_a_complete_authentic_download_can_be_published() {
         bytes
     );
 
-    let mut damaged = bytes;
-    let middle = damaged.len() / 2;
-    damaged[middle] ^= 1;
-    assert!(
-        sync_download::stage(
+    // Every content-derived rejection of a full-length file must leave nothing to resume from,
+    // so the next sync restarts at offset 0 instead of re-verifying the same bad bytes.
+    // Header offsets: magic 0..8, version 8..10, encoding profile 10..12, suite 12..14.
+    let middle = bytes.len() / 2;
+    for (case, (position, status)) in [
+        (middle, None),
+        (8, Some(ChurStatus::UnsupportedVersion)),
+        (12, Some(ChurStatus::UnsupportedSuite)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let temp = id(10 + case as u8);
+        let mut damaged = bytes.clone();
+        damaged[position] ^= 0xff;
+        let error = sync_download::stage(
             &vault_root,
             &id(7),
-            &id(10),
+            &temp,
             &mut Bytes(damaged),
             &key,
             &expected,
         )
-        .is_err()
-    );
-    assert!(store::temporary_exists(&vault_root, &id(7), &id(10)));
-    assert!(!store::container_exists(&vault_root, &id(7), &id(10)));
+        .err()
+        .expect("damaged container is rejected");
+        if let Some(status) = status {
+            assert_eq!(error.status(), status);
+        }
+        assert!(
+            !store::temporary_exists(&vault_root, &id(7), &temp),
+            "case {case} {:?}",
+            error.status()
+        );
+        assert!(!store::container_exists(&vault_root, &id(7), &temp));
+        assert_eq!(
+            sync_download::staged_offset(&vault_root, &id(7), &temp, &expected).expect("offset"),
+            0
+        );
+    }
 }

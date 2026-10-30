@@ -20,6 +20,8 @@ const RANGE_BYTES: usize = 1024 * 1024;
 
 /// Reads a durable download prefix without creating a container.
 /// A committed container from a crash before catalog activation is verified by finish.
+/// A committed container exists only after verification, so its full length means complete.
+/// Bytes damaged at rest after that are not a download fault, and the download is not restarted.
 pub fn staged_offset(
     root_dir: &VaultRoot,
     local_store_id: &Id,
@@ -246,13 +248,47 @@ fn verify_container(
     object_key: &Key,
     expected: &Expectation,
 ) -> Result<VerifiedDownload> {
+    // An incomplete file stays: more ranges can still complete it.
     ensure!(
         container.length()? == expected.container_length,
         ObjectIncomplete,
         "shared download is not complete"
     );
+    match check_container(&mut container, object_key, expected) {
+        Ok((manifest, final_commit, container_version)) => Ok(VerifiedDownload {
+            container,
+            manifest,
+            final_commit,
+            ciphertext_size: expected.container_length,
+            container_version,
+        }),
+        Err(error)
+            if !matches!(
+                error.status(),
+                ChurStatus::IoFailure
+                    | ChurStatus::StorageUnavailable
+                    | ChurStatus::Cancelled
+                    | ChurStatus::InternalFailure
+            ) =>
+        {
+            // Range bytes are unauthenticated until now, so any content-derived rejection
+            // (corrupt, unsupported header field, trailing bytes) of a full-length file would
+            // make staged_offset report a complete download and block every retry. The
+            // original rejection wins over a failed delete, which the next append redoes.
+            let _ = container.discard();
+            Err(error)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn check_container(
+    container: &mut TemporaryContainer,
+    object_key: &Key,
+    expected: &Expectation,
+) -> Result<(CanonicalManifest, CanonicalFinalCommit, ContainerVersion)> {
     let mut view = Downloaded {
-        container: &mut container,
+        container,
         length: expected.container_length,
     };
     let mut reader = StreamReader::open(&mut view, object_key, &expected.identity)?;
@@ -265,14 +301,7 @@ fn verify_container(
         ObjectCorrupt,
         "downloaded container commitment differs from the signed operation"
     );
-    drop(reader);
-    Ok(VerifiedDownload {
-        container,
-        manifest,
-        final_commit,
-        ciphertext_size: expected.container_length,
-        container_version,
-    })
+    Ok((manifest, final_commit, container_version))
 }
 
 /// Verifies the signed object against its container and activates the local row.

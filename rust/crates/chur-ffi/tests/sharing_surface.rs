@@ -737,6 +737,22 @@ fn identity_provisioning_is_private_atomic_and_idempotent() {
         0,
         "modified ciphertext cannot activate"
     );
+    offset = u64::MAX;
+    assert_eq!(
+        unsafe {
+            chur_sharing_download_offset(
+                recipient_session,
+                collection_id.as_bytes().as_ptr(),
+                shared_object_id.as_bytes().as_ptr(),
+                &mut offset,
+            )
+        },
+        0
+    );
+    assert_eq!(
+        offset, 0,
+        "rejected ciphertext is discarded so the download restarts"
+    );
     assert_eq!(
         unsafe {
             chur_sharing_download_append(

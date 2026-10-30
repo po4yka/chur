@@ -137,10 +137,14 @@
         (!self.window.windowScene || self.window.windowScene.activationState == UISceneActivationStateForegroundActive);
 }
 - (BOOL)hierarchyVisible {
+    if (!self.window || self.window.hidden || self.window.alpha <= 0) return NO;
+    // Compose moves or clips the interop view without hiding it; skip frames nobody can see.
+    CGRect visible = [self convertRect:self.bounds toView:nil];
     for (UIView *node = self; node; node = node.superview) {
         if (node.hidden || node.alpha <= 0) return NO;
+        if (node != self && node.clipsToBounds) visible = CGRectIntersection(visible, [node convertRect:node.bounds toView:nil]);
     }
-    return self.window && !self.window.hidden && self.window.alpha > 0;
+    return !CGRectIsEmpty(CGRectIntersection(visible, self.window.bounds));
 }
 - (BOOL)canRender { return [self hostActive] && [self hierarchyVisible]; }
 - (void)stopVisibilityTimer { [_visibilityTimer invalidate]; _visibilityTimer = nil; }

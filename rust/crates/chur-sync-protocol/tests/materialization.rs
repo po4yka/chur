@@ -477,3 +477,65 @@ fn album_creation_rejects_conflicting_name_collection_and_causal_identifier_reus
     }
     assert_eq!(state.album_name(&id(13)), Some("Legacy"));
 }
+
+#[test]
+fn a_rejected_tag_leaves_no_partial_state_behind() {
+    let key = DeviceSigningKey::from_seed([2; 32]);
+    let create = OperationPayload::new(
+        id(10),
+        1,
+        PayloadBody::CreateObject {
+            object_id: id(11),
+            object_generation: 1,
+            store_id: id(12),
+            stream_id: id(18),
+            metadata_fields: Vec::new(),
+        },
+    )
+    .expect("create");
+    let create_operation = operation(&key, 20, id(2), 1, [0; 32], Vec::new(), &create);
+    let tag = |tag_id: u8, name: &str| {
+        OperationPayload::new(
+            id(10),
+            1,
+            PayloadBody::AddTag {
+                tag_id: id(tag_id),
+                object_id: id(11),
+                name: name.to_owned(),
+            },
+        )
+        .expect("tag")
+    };
+    let first = tag(30, "Trips");
+    let first_operation = operation(
+        &key,
+        24,
+        id(2),
+        2,
+        create_operation.digest(),
+        Vec::new(),
+        &first,
+    );
+    // Same operation identifier, different content: the set refuses it after
+    // the tag name register would already have taken the new name.
+    let reused = tag(31, "Other");
+    let reused_operation = operation(
+        &key,
+        24,
+        id(2),
+        3,
+        first_operation.digest(),
+        Vec::new(),
+        &reused,
+    );
+    let mut state = MaterializedState::new();
+    state.apply(&create_operation, &create).expect("create");
+    state.apply(&first_operation, &first).expect("first tag");
+
+    state
+        .apply(&reused_operation, &reused)
+        .expect_err("reused operation identifier");
+
+    assert_eq!(state.tag_name(&id(30)), Some("Trips"));
+    assert_eq!(state.tag_name(&id(31)), None);
+}

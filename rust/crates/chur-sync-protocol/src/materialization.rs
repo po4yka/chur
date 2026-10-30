@@ -92,6 +92,9 @@ impl MaterializedState {
     }
 
     /// Applies one already authenticated operation and its bound private payload.
+    ///
+    /// Atomic: an `Err` or `PendingCause` result leaves the state unchanged, so
+    /// callers apply in place and never clone the whole state to roll back.
     pub fn apply(
         &mut self,
         operation: &Operation,
@@ -185,11 +188,14 @@ impl MaterializedState {
                 // and CONFLICT_RESOLUTION.md §6 keeps a concurrent edit in the
                 // retained state so a later restore shows it. Discarding it
                 // here made the catalog depend on arrival order.
-                object
+                let mut register = object
                     .metadata
-                    .entry(field.id())
-                    .or_default()
-                    .apply(stamp, field.value().to_vec())
+                    .get(&field.id())
+                    .cloned()
+                    .unwrap_or_default();
+                let outcome = register.apply(stamp, field.value().to_vec())?;
+                object.metadata.insert(field.id(), register);
+                Ok(outcome)
             }
             PayloadBody::CreateAlbum { album_id, name } => {
                 if let Some(album) = self.albums.get_mut(album_id) {
@@ -289,11 +295,11 @@ impl MaterializedState {
                 if !self.objects.contains_key(object_id) {
                     return Ok(MergeOutcome::PendingCause);
                 }
-                self.tag_names
-                    .entry(*tag_id)
-                    .or_default()
-                    .apply(stamp.clone(), name.clone())?;
-                self.object_tags.add((*tag_id, *object_id), stamp)
+                let mut tag_name = self.tag_names.get(tag_id).cloned().unwrap_or_default();
+                tag_name.apply(stamp.clone(), name.clone())?;
+                let outcome = self.object_tags.add((*tag_id, *object_id), stamp)?;
+                self.tag_names.insert(*tag_id, tag_name);
+                Ok(outcome)
             }
             PayloadBody::RemoveTag {
                 tag_id,
@@ -393,15 +399,13 @@ impl MaterializedState {
                 let Some((operation, payload)) = self.deferred.remove(&id) else {
                     continue;
                 };
-                let mut candidate = self.clone();
-                match candidate.apply(&operation, &payload) {
+                match self.apply(&operation, &payload) {
                     Ok(outcome) if outcome != MergeOutcome::PendingCause => {
                         if outcome == MergeOutcome::Applied
                             && matches!(payload.body(), PayloadBody::PurgeObject { .. })
                         {
                             purges.push(payload);
                         }
-                        *self = candidate;
                         progressed = true;
                     }
                     // An unresolved or contradictory private effect must not

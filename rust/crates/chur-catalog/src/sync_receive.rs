@@ -222,23 +222,20 @@ pub fn load_materialized_state(db: &CatalogDb, keys: &KeyDirectory) -> Result<Ma
                     | PayloadBody::ChangeCollectionMembership(_)
                     | PayloadBody::IssueCollectionGrant(_)
             ) {
-                let mut candidate = state.clone();
-                let result = candidate.apply(&operation, &payload);
+                let result = state.apply(&operation, &payload);
                 if matches!(result, Ok(MergeOutcome::PendingCause)) || (pruned && result.is_err()) {
                     if !pruned {
                         continue;
                     }
-                    candidate = state.clone();
-                    candidate.defer_revoked_content(&operation, &payload);
+                    state.defer_revoked_content(&operation, &payload);
                 } else {
                     result.map_err(corrupt_materialized_state)?;
-                    for purge in candidate.retry_deferred_after(&payload) {
+                    for purge in state.retry_deferred_after(&payload) {
                         // The receiving/authoring transaction must commit a
                         // resolved terminal effect before publishing its state.
                         validate_projected_purge(db, &purge)?;
                     }
                 }
-                state = candidate;
             }
             if pruned {
                 pruned_since.entry(*device_id).or_insert(sequence);
@@ -889,23 +886,27 @@ pub fn accept_content_operation(
         PayloadBody::CreateAlbum { album_id, .. } => state.album_name(album_id).is_none(),
         _ => false,
     };
-    let mut projected_state = None;
+    // The gate applies in place and the transaction closure reads the result,
+    // so the state is shared through a cell instead of cloned per operation.
+    let state_cell = std::cell::RefCell::new(&mut *state);
+    let mutated = std::cell::Cell::new(false);
     let purges = std::cell::RefCell::new(Vec::new());
-    let album_projection = std::cell::RefCell::new(None);
+    let album_projection = std::cell::Cell::new(false);
     let resolved_memberships = std::cell::Cell::new(false);
-    let outcome = log.accept_gated_with(
+    let accepted = log.accept_gated_with(
         db,
         &operation,
         membership,
         |authenticated_log| {
-            let mut candidate = state.clone();
+            let mut guard = state_cell.borrow_mut();
+            let candidate = &mut **guard;
+            let pending_before = candidate.pending_operations(None);
             let result = candidate.apply(&operation, &payload);
             if matches!(result, Ok(MergeOutcome::PendingCause)) || result.is_err() {
                 if !authenticated_log.has_pruned_revocation_cause(&operation, membership)? {
                     result?;
                     return Ok(false);
                 }
-                candidate = state.clone();
                 candidate.defer_revoked_content(&operation, &payload);
             } else {
                 if matches!(payload.body(), PayloadBody::PurgeObject { .. }) {
@@ -915,8 +916,8 @@ pub fn accept_content_operation(
                     .borrow_mut()
                     .extend(candidate.retry_deferred_after(&payload));
             }
-            resolved_memberships
-                .set(candidate.pending_operations(None) < state.pending_operations(None));
+            mutated.set(true);
+            resolved_memberships.set(candidate.pending_operations(None) < pending_before);
             if resolved_memberships.get()
                 || matches!(
                     payload.body(),
@@ -926,16 +927,16 @@ pub fn accept_content_operation(
                         | PayloadBody::RemoveAlbumMembership { .. }
                 )
             {
-                *album_projection.borrow_mut() = Some(candidate.clone());
+                album_projection.set(true);
             }
-            projected_state = Some(candidate);
             Ok(true)
         },
         |tx| {
-            if let Some(state) = album_projection.borrow().as_ref() {
-                project_album_operation(tx, state, &payload, creates_new_album)?;
+            if album_projection.get() {
+                let state = state_cell.borrow();
+                project_album_operation(tx, &state, &payload, creates_new_album)?;
                 if resolved_memberships.get() {
-                    crate::own_sync::project_live_album_memberships(tx, state)?;
+                    crate::own_sync::project_live_album_memberships(tx, &state)?;
                 }
             }
             for purge in purges.borrow().iter() {
@@ -943,19 +944,18 @@ pub fn accept_content_operation(
             }
             Ok(())
         },
-    )?;
-    if outcome == ApplyOutcome::Applied {
-        if let PayloadBody::CreateObject { object_id, .. }
+    );
+    if accepted.is_err() && mutated.get() {
+        // The transaction rolled back after the in-place apply, so the durable
+        // log is the state the operation found: replay it, as the log does.
+        *state = load_materialized_state(db, keys)?;
+    }
+    let outcome = accepted?;
+    if outcome == ApplyOutcome::Applied
+        && let PayloadBody::CreateObject { object_id, .. }
         | PayloadBody::CommitObject { object_id, .. } = payload.body()
-        {
-            crate::own_sync::mark_album_object_ready(db, object_id);
-        }
-        *state = projected_state.ok_or_else(|| {
-            Error::new(
-                ChurStatus::InternalFailure,
-                "applied content operation has no projection state",
-            )
-        })?;
+    {
+        crate::own_sync::mark_album_object_ready(db, object_id);
     }
     Ok(outcome)
 }

@@ -24,7 +24,7 @@ use chur_format::catalog_export::{
 };
 use chur_format::constants::{
     CATALOG_FORMAT_VERSION_V15, CATALOG_FORMAT_VERSION_V16, CATALOG_FORMAT_VERSION_V17,
-    CATALOG_FORMAT_VERSION_V18, ObjectState,
+    CATALOG_FORMAT_VERSION_V18, CATALOG_FORMAT_VERSION_V19, ObjectState,
 };
 use rusqlite::Connection;
 use rusqlite::types::{ToSqlOutput, ValueRef};
@@ -257,8 +257,9 @@ pub fn import(
         CATALOG_FORMAT_VERSION_V15
         | CATALOG_FORMAT_VERSION_V16
         | CATALOG_FORMAT_VERSION_V17
-        | CATALOG_FORMAT_VERSION_V18 => {}
-        version if version > CATALOG_FORMAT_VERSION_V18 => bail!(
+        | CATALOG_FORMAT_VERSION_V18
+        | CATALOG_FORMAT_VERSION_V19 => {}
+        version if version > CATALOG_FORMAT_VERSION_V19 => bail!(
             UnsupportedVersion,
             "the catalog export belongs to a newer catalog schema"
         ),
@@ -478,11 +479,11 @@ mod tests {
         let header = import(
             &mut copy,
             Chunks(vec![bytes.clone()].into_iter()),
-            CATALOG_FORMAT_VERSION_V18,
+            CATALOG_FORMAT_VERSION_V19,
             &|| false,
         )
         .expect("import");
-        assert_eq!(header.catalog_format_version, CATALOG_FORMAT_VERSION_V18);
+        assert_eq!(header.catalog_format_version, CATALOG_FORMAT_VERSION_V19);
         assert_eq!(stream_of(&copy), bytes);
         let found: i64 = copy
             .connection()
@@ -503,7 +504,7 @@ mod tests {
             import(
                 &mut populated,
                 Chunks(vec![bytes.clone()].into_iter()),
-                CATALOG_FORMAT_VERSION_V18,
+                CATALOG_FORMAT_VERSION_V19,
                 &|| false
             )
             .unwrap_err()
@@ -514,7 +515,7 @@ mod tests {
         // A newer schema version is unsupported; an older one cannot exist.
         for (version, status) in [
             (
-                CATALOG_FORMAT_VERSION_V18 + 1,
+                CATALOG_FORMAT_VERSION_V19 + 1,
                 ChurStatus::UnsupportedVersion,
             ),
             (CATALOG_FORMAT_VERSION_V15 - 1, ChurStatus::VaultCorrupt),
@@ -541,7 +542,7 @@ mod tests {
             import(
                 &mut empty_catalog(),
                 Chunks(vec![renamed].into_iter()),
-                CATALOG_FORMAT_VERSION_V18,
+                CATALOG_FORMAT_VERSION_V19,
                 &|| false
             )
             .unwrap_err()
@@ -556,7 +557,7 @@ mod tests {
             import(
                 &mut empty_catalog(),
                 Chunks(vec![generation].into_iter()),
-                CATALOG_FORMAT_VERSION_V18,
+                CATALOG_FORMAT_VERSION_V19,
                 &|| false
             )
             .unwrap_err()
@@ -572,6 +573,7 @@ mod tests {
             CATALOG_FORMAT_VERSION_V16,
             CATALOG_FORMAT_VERSION_V17,
             CATALOG_FORMAT_VERSION_V18,
+            CATALOG_FORMAT_VERSION_V19,
         ] {
             let mut original = empty_catalog();
             schema::install_export_version(&mut original, version, 7)
@@ -618,9 +620,12 @@ mod tests {
             if version < CATALOG_FORMAT_VERSION_V18 {
                 schema::migrate_v17_to_v18(&mut copy).expect("v17 to v18");
             }
+            if version < CATALOG_FORMAT_VERSION_V19 {
+                schema::migrate_v18_to_v19(&mut copy).expect("v18 to v19");
+            }
             assert_eq!(
                 schema::recorded_version(copy.connection()).unwrap(),
-                Some(CATALOG_FORMAT_VERSION_V18)
+                Some(CATALOG_FORMAT_VERSION_V19)
             );
             let found: i64 = copy.connection().query_row(
                 "SELECT count(*) FROM private_note_search WHERE private_note_search MATCH 'searchable'",
@@ -643,6 +648,7 @@ mod tests {
             CATALOG_FORMAT_VERSION_V15,
             CATALOG_FORMAT_VERSION_V16,
             CATALOG_FORMAT_VERSION_V17,
+            CATALOG_FORMAT_VERSION_V18,
         ] {
             let mut changed = bytes.clone();
             changed[2..4].copy_from_slice(&version.to_be_bytes());

@@ -323,15 +323,21 @@ pub fn accept(
             "object grant addresses another collection member"
         );
         let (states, _) = sharing_service::authenticate_issuers(issuers)?;
-        states
+        let (generation, state) = states
             .get(grant.source_vault_id())
-            .and_then(|history| history.last_key_value().map(|(_, state)| state.clone()))
+            .and_then(|history| history.last_key_value())
             .ok_or_else(|| {
                 Error::new(
                     ChurStatus::AuthenticationFailed,
                     "object grant source membership is absent",
                 )
-            })?
+            })?;
+        sharing_service::ensure_not_below_accepted_issuer(
+            db,
+            grant.source_vault_id(),
+            *generation,
+        )?;
+        state.clone()
     };
     let sender = source.device(grant.source_device_id()).ok_or_else(|| {
         Error::new(

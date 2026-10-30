@@ -69,6 +69,8 @@ A different signing or HPKE key blocks the membership change and all new grants 
 
 An accepted grant must match the active recipient entry exactly: collection, recipient identity and device, HPKE key identifier, permission profile, collection epoch, and the generation that last changed that recipient. A later membership record for another recipient does not stale the grant. A later record for the same recipient does.
 
+The accepted membership generation of each issuer vault (the source vault, or a `ManageMembers` delegate vault) is a stored high-water mark (`sharing_issuer_marks`), raised in the transaction that accepts the evidence and never lowered, so pruning collection rows cannot lower it. See [`COLLECTION_GRANTS.md`](COLLECTION_GRANTS.md) §9 and [`../format/CATALOG_SCHEMA_V19.md`](../format/CATALOG_SCHEMA_V19.md).
+
 Grant replay is idempotent only when complete bytes match. Reusing a grant identifier with different bytes freezes grant acceptance for that collection as a security conflict.
 
 ## 6. Recovery and device loss

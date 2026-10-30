@@ -193,6 +193,11 @@ pub fn project_membership(
         Conflict,
         "the collection membership head changed concurrently"
     );
+    raise_issuer_membership_mark(
+        transaction,
+        record.issuer_identity_vault_id(),
+        record.issuer_membership_generation(),
+    )?;
     Ok((candidate, outcome))
 }
 
@@ -644,6 +649,80 @@ pub fn membership_record_at(
     Ok(record)
 }
 
+/// The highest identity-membership generation of `issuer_vault_id` that this
+/// vault has accepted evidence for, or zero. The issuer is the source vault or
+/// a `ManageMembers` delegate vault; each vault is marked with its own chain.
+///
+/// This is the local high-water mark that `COLLECTION_GRANTS.md` §9 requires:
+/// evidence whose chain for the vault ends below it was truncated before a
+/// membership change the recipient has already relied on. It is stored, so it
+/// does not depend on which rows are kept (`CATALOG_SCHEMA_V19.md`).
+pub fn issuer_membership_high_water(db: &CatalogDb, issuer_vault_id: &Id) -> Result<u64> {
+    let stored: Option<i64> = db
+        .connection()
+        .query_row(
+            "SELECT accepted_generation FROM sharing_issuer_marks WHERE issuer_vault_id = ?1",
+            [issuer_vault_id.as_bytes().as_slice()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| map_sqlite(error, "the accepted source generation could not be read"))?;
+    stored.map_or(Ok(0), |generation| {
+        from_sqlite_integer(generation, "the accepted source generation is negative")
+    })
+}
+
+/// Raises the stored mark of `issuer_vault_id` to `generation` when it is higher.
+///
+/// Callers run it in the transaction that accepts the record, grant or share
+/// that the generation belongs to, so the mark and the accepted state commit
+/// or roll back together.
+pub(crate) fn raise_issuer_membership_mark(
+    transaction: &Transaction<'_>,
+    issuer_vault_id: &Id,
+    generation: u64,
+) -> Result<()> {
+    transaction
+        .execute(
+            "INSERT INTO sharing_issuer_marks (issuer_vault_id, accepted_generation)
+             VALUES (?1, ?2)
+             ON CONFLICT (issuer_vault_id) DO UPDATE
+                SET accepted_generation = max(accepted_generation, excluded.accepted_generation)",
+            params![
+                issuer_vault_id.as_bytes().as_slice(),
+                as_sqlite_integer(generation, "the accepted source generation is too large")?,
+            ],
+        )
+        .map_err(|error| map_sqlite(error, "the accepted source generation could not be stored"))?;
+    Ok(())
+}
+
+/// Fills the marks of a v17 catalog from the stored collection membership
+/// records, each under the issuer vault and generation it was signed under. A
+/// stored grant names only a sender device, not the sender vault, so grants add
+/// nothing here; the mark rises with the next evidence that is accepted.
+pub(crate) fn backfill_issuer_marks(transaction: &Transaction<'_>) -> Result<()> {
+    let mut marks = BTreeMap::<Id, u64>::new();
+    let mut statement = transaction
+        .prepare("SELECT record FROM sharing_membership_records")
+        .map_err(|error| map_sqlite(error, "stored issuer generations could not be prepared"))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, Vec<u8>>(0))
+        .map_err(|error| map_sqlite(error, "stored issuer generations could not be read"))?;
+    for row in rows {
+        let bytes =
+            row.map_err(|error| map_sqlite(error, "a stored issuer generation could not be read"))?;
+        let record = CollectionMembershipRecord::decode(&bytes).map_err(corrupt_sharing)?;
+        let mark = marks.entry(*record.issuer_identity_vault_id()).or_default();
+        *mark = (*mark).max(record.issuer_membership_generation());
+    }
+    drop(statement);
+    for (issuer, generation) in marks {
+        raise_issuer_membership_mark(transaction, &issuer, generation)?;
+    }
+    Ok(())
+}
+
 /// Projects one validated collection grant inside an existing transaction.
 pub fn project_grant(
     transaction: &Transaction<'_>,
@@ -713,6 +792,11 @@ pub fn project_grant(
             ],
         )
         .map_err(|error| map_sqlite(error, "the collection grant could not be written"))?;
+    raise_issuer_membership_mark(
+        transaction,
+        sender_membership.vault_id(),
+        grant.sender_membership_generation(),
+    )?;
     Ok(GrantStoreOutcome::Stored)
 }
 
@@ -998,6 +1082,244 @@ mod tests {
             panic!("corrupt projection loaded")
         };
         assert!(error.status() == ChurStatus::CatalogCorrupt);
+    }
+
+    /// A membership of `vault_id` at `generation`: its first device enrolls
+    /// further devices until the chain reaches that generation.
+    fn membership_at(
+        vault_id: Id,
+        device_id: Id,
+        key: &DeviceSigningKey,
+        generation: u64,
+    ) -> MembershipState {
+        let initial = EnrollmentRecord::initial(vault_id, device_id, key.verifying_key(), [3; 32])
+            .expect("initial enrollment")
+            .sign(key);
+        let mut state = MembershipState::bootstrap(&initial).expect("membership");
+        for next in 2..=generation {
+            let extra = EnrollmentRecord::new(
+                vault_id,
+                Id::new([100 + u8::try_from(next).expect("small"); 16]).expect("id"),
+                [u8::try_from(next).expect("small"); 32],
+                [4; 32],
+                next,
+                device_id,
+                next,
+                *state.commitment(),
+                [5; 32],
+            )
+            .expect("later enrollment")
+            .sign(key);
+            state
+                .accept_enrollment(&extra, &device_id, next)
+                .expect("accept later enrollment");
+        }
+        state
+    }
+
+    #[test]
+    fn the_source_mark_only_rises_survives_reopen_and_is_backfilled_by_migration() {
+        let directory = std::env::temp_dir().join(format!(
+            "chur-source-mark-{}",
+            chur_crypto::random::id().expect("id").to_hex()
+        ));
+        std::fs::create_dir_all(&directory).expect("directory");
+        let path = directory.join("catalog.db");
+        let root: Key = random::secret::<32>().expect("root");
+        let key = CatalogKey::derive(&root, &id(1)).expect("key");
+        let mut db = CatalogDb::open(&CatalogLocation::File(&path), &key).expect("catalog");
+        open_at_current_version(&mut db, 1).expect("schema");
+        let source_key = DeviceSigningKey::from_seed([1; 32]);
+        let source = membership_at(id(1), id(2), &source_key, 3);
+        provision(&mut db, id(1), id(4), 7).expect("provision sharing");
+        assert_eq!(issuer_membership_high_water(&db, &id(1)).expect("empty"), 0);
+        let record = CollectionMembershipRecord::new(
+            id(1),
+            id(4),
+            1,
+            [0; 32],
+            CollectionMembershipAction::Upsert(PermissionProfile::Read),
+            id(5),
+            id(6),
+            [7; 32],
+            [8; 32],
+            7,
+            id(1),
+            id(2),
+            3,
+            1,
+        )
+        .expect("membership")
+        .sign(&source_key);
+        accept_membership(&mut db, &record, &source).expect("accept membership");
+        assert_eq!(issuer_membership_high_water(&db, &id(1)).expect("mark"), 3);
+
+        for (offered, stored) in [(2, 3), (5, 5), (3, 5)] {
+            db.transaction(|transaction| {
+                raise_issuer_membership_mark(transaction, &id(1), offered)
+            })
+            .expect("raise");
+            assert_eq!(
+                issuer_membership_high_water(&db, &id(1)).expect("mark"),
+                stored
+            );
+        }
+        db.close().expect("close");
+        let mut db = CatalogDb::open(&CatalogLocation::File(&path), &key).expect("reopen");
+        assert_eq!(
+            issuer_membership_high_water(&db, &id(1)).expect("reopened"),
+            5
+        );
+
+        // A catalog migrated from v18 starts from the issuer generation that
+        // its stored record was signed under, not from a fixed value.
+        db.connection()
+            .execute_batch(
+                "DROP TABLE sharing_issuer_marks;
+                 UPDATE vault_state SET catalog_format_version = 18 WHERE only_row = 1;",
+            )
+            .expect("v18 fixture");
+        crate::schema::migrate_v18_to_v19(&mut db).expect("migrate");
+        assert_eq!(
+            issuer_membership_high_water(&db, &id(1)).expect("backfilled"),
+            3
+        );
+        assert_eq!(
+            issuer_membership_high_water(&db, &id(9)).expect("other source"),
+            0
+        );
+        db.close().expect("close");
+        std::fs::remove_dir_all(&directory).expect("cleanup");
+    }
+
+    #[test]
+    fn a_delegate_sender_marks_its_own_vault_and_leaves_the_source_mark_alone() {
+        let mut db = catalog();
+        let source_key = DeviceSigningKey::from_seed([1; 32]);
+        let source = membership_at(id(1), id(2), &source_key, 2);
+        let delegate_key = DeviceSigningKey::from_seed([21; 32]);
+        let delegate = membership_at(id(20), id(21), &delegate_key, 3);
+        provision(&mut db, id(1), id(4), 7).expect("provision sharing");
+        let recipient = DeviceIdentity::from_seeds([5; 32], [6; 32]);
+        let read_member = CollectionMembershipRecord::new(
+            id(1),
+            id(4),
+            1,
+            [0; 32],
+            CollectionMembershipAction::Upsert(PermissionProfile::Read),
+            id(7),
+            id(8),
+            recipient.signing_public_key(),
+            recipient.hpke_public_key(),
+            7,
+            id(1),
+            id(2),
+            2,
+            1,
+        )
+        .expect("recipient membership")
+        .sign(&source_key);
+        accept_membership(&mut db, &read_member, &source).expect("accept recipient");
+        let manager = CollectionMembershipRecord::new(
+            id(1),
+            id(4),
+            2,
+            read_member.commitment(),
+            CollectionMembershipAction::Upsert(PermissionProfile::ManageMembers),
+            id(20),
+            id(21),
+            delegate_key.verifying_key(),
+            [22; 32],
+            7,
+            id(1),
+            id(2),
+            2,
+            2,
+        )
+        .expect("delegate membership")
+        .sign(&source_key);
+        accept_membership(&mut db, &manager, &source).expect("accept delegate");
+        assert_eq!(
+            issuer_membership_high_water(&db, &id(1)).expect("source"),
+            2
+        );
+        assert_eq!(
+            issuer_membership_high_water(&db, &id(20)).expect("delegate"),
+            0
+        );
+
+        // The delegate signs the grant under its own generation 3.
+        let grant = CollectionGrant::seal(
+            id(10),
+            id(1),
+            id(4),
+            7,
+            1,
+            id(7),
+            id(8),
+            &recipient.hpke_public_key(),
+            id(21),
+            PermissionProfile::Read,
+            3,
+            1,
+            &Key::new([9; 32]),
+            &delegate_key,
+        )
+        .expect("delegate grant");
+        store_grant(&mut db, &grant, &delegate).expect("store delegate grant");
+        assert_eq!(
+            issuer_membership_high_water(&db, &id(1)).expect("source"),
+            2
+        );
+        assert_eq!(
+            issuer_membership_high_water(&db, &id(20)).expect("delegate"),
+            3
+        );
+        // Honest source evidence at generation 2 stays acceptable; delegate
+        // evidence cut below generation 3 does not.
+        crate::sharing_service::ensure_not_below_accepted_issuer(&db, &id(1), 2)
+            .expect("honest source evidence");
+        assert!(crate::sharing_service::ensure_not_below_accepted_issuer(&db, &id(20), 2).is_err());
+
+        // A record issued by the delegate marks the delegate vault.
+        let delegated = CollectionMembershipRecord::new(
+            id(1),
+            id(4),
+            3,
+            manager.commitment(),
+            CollectionMembershipAction::Upsert(PermissionProfile::Read),
+            id(30),
+            id(31),
+            [32; 32],
+            [33; 32],
+            7,
+            id(20),
+            id(21),
+            3,
+            1,
+        )
+        .expect("delegated membership")
+        .sign(&delegate_key);
+        accept_membership(&mut db, &delegated, &delegate).expect("accept delegated record");
+
+        // The v19 migration keys each stored record by its issuer vault and
+        // generation. A grant names no sender vault, so it adds nothing.
+        db.connection()
+            .execute_batch(
+                "DROP TABLE sharing_issuer_marks;
+                 UPDATE vault_state SET catalog_format_version = 18 WHERE only_row = 1;",
+            )
+            .expect("v18 fixture");
+        crate::schema::migrate_v18_to_v19(&mut db).expect("migrate");
+        assert_eq!(
+            issuer_membership_high_water(&db, &id(1)).expect("source"),
+            2
+        );
+        assert_eq!(
+            issuer_membership_high_water(&db, &id(20)).expect("delegate"),
+            3
+        );
+        assert_eq!(issuer_membership_high_water(&db, &id(9)).expect("other"), 0);
     }
 
     #[test]

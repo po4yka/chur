@@ -127,7 +127,7 @@ Conceptual fields:
 
 ```text
 offset  size  field                          v1 value
-0x00     2    catalog_format_version:u16     0x0001 through 0x0012
+0x00     2    catalog_format_version:u16     0x0001 through 0x0013
 0x02     2    catalog_crypto_suite:u16       0x0001
 0x04    16    opaque_catalog_path_id         random, never all zero
 0x14     8    catalog_generation:u64

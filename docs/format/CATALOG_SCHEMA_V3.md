@@ -29,7 +29,7 @@ Generation zero uses the all-zero commitment. `initial_epoch` and `current_epoch
 
 ## 4. Grants
 
-`sharing_grants` stores the complete 309-byte `CollectionGrantV1`, collection, recipient identity vault, recipient device, recipient membership generation, and collection epoch. `grant_id` is the primary key. Identical replay changes no row. Different record bytes for the same identifier are a conflict.
+`sharing_grants` stores the complete 309-byte `CollectionGrantV1`, collection, recipient identity vault, recipient device, recipient membership generation, and collection epoch. `grant_id` is the primary key. Identical replay changes no row. Different record bytes for the same identifier are a conflict. The accepted identity-membership generation of each evidence issuer is stored apart from these rows in `sharing_issuer_marks` ([`CATALOG_SCHEMA_V19.md`](CATALOG_SCHEMA_V19.md)).
 
 ## 5. Migration
 

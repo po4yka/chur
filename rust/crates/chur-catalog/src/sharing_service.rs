@@ -1059,10 +1059,28 @@ pub fn accept_share(
                 "collection grant sender has no authenticated membership",
             )
         })?;
+    // An honest grant stays valid under newer evidence, so a source that has
+    // since enrolled a device or shared another collection keeps syncing this
+    // one. The grant verifies against the state at its own generation, the
+    // sender must still be active in the newest supplied state, and the newest
+    // supplied state may not end below a generation already accepted.
     ensure!(
-        grant.sender_membership_generation() == current_sender_generation,
+        grant.sender_membership_generation() <= current_sender_generation,
         AuthenticationFailed,
-        "collection grant sender membership is stale"
+        "collection grant sender membership is newer than its evidence"
+    );
+    ensure_not_below_accepted_issuer(db, grant_operation.vault_id(), current_sender_generation)?;
+    let current_sender = issuer_state(
+        &issuer_states,
+        grant_operation.vault_id(),
+        current_sender_generation,
+    )?;
+    ensure!(
+        current_sender
+            .device(grant.sender_device_id())
+            .is_some_and(|device| device.status() == DeviceStatus::Active),
+        AuthenticationFailed,
+        "collection grant sender is revoked"
     );
     let sender = issuer_state(
         &issuer_states,
@@ -1132,8 +1150,23 @@ pub fn accept_share(
         sender,
         &collection_state,
         &collection_key,
+        current_sender_generation,
     )?;
     Ok(collection_state)
+}
+
+/// Rejects issuer evidence whose chain ends below a generation already relied on.
+pub(crate) fn ensure_not_below_accepted_issuer(
+    db: &CatalogDb,
+    issuer_vault_id: &Id,
+    evidence_generation: u64,
+) -> Result<()> {
+    ensure!(
+        evidence_generation >= sharing::issuer_membership_high_water(db, issuer_vault_id)?,
+        AuthenticationFailed,
+        "issuer membership evidence is below an accepted generation"
+    );
+    Ok(())
 }
 
 pub(crate) type IssuerStates = BTreeMap<Id, BTreeMap<u64, MembershipState>>;
@@ -1362,6 +1395,7 @@ fn install_share(
     sender: &MembershipState,
     incoming: &CollectionMembershipState,
     collection_key: &Key,
+    evidence_generation: u64,
 ) -> Result<()> {
     let existing_state = sharing::load(db, incoming.collection_id())?;
     let existing_collection = match store::collection(db, incoming.collection_id()) {
@@ -1516,6 +1550,7 @@ fn install_share(
             "projected share does not match authenticated state"
         );
         sharing::project_grant(transaction, &current, grant, sender)?;
+        sharing::raise_issuer_membership_mark(transaction, sender.vault_id(), evidence_generation)?;
         schema::bump_generation(transaction)?;
         Ok(())
     })
@@ -1566,6 +1601,7 @@ mod tests {
         schema,
     };
     use chur_crypto::Nonce;
+    use chur_sync_protocol::object_grant::{ObjectKeyGrant, ObjectPrekey};
 
     fn id(byte: u8) -> Id {
         Id::new([byte; 16]).expect("id")
@@ -2471,6 +2507,30 @@ mod tests {
             &source_envelope.encode(),
         )
         .expect("source collection");
+        let other_collection_id = id(62);
+        let other_envelope = CollectionKeyEnvelope::seal(
+            &source_root,
+            source_vault,
+            other_collection_id,
+            1,
+            1,
+            Nonce::new([63; 24]),
+            &Key::new([64; 32]),
+        )
+        .expect("other envelope");
+        store::put_collection_with_envelope(
+            &mut source,
+            &Collection {
+                collection_id: other_collection_id,
+                current_epoch: 1,
+                policy_type: COLLECTION_POLICY_VAULT_DEFAULT,
+                created_revision: 1,
+                status: COLLECTION_STATUS_ACTIVE,
+            },
+            1,
+            &other_envelope.encode(),
+        )
+        .expect("other collection");
 
         let recipient_vault = id(26);
         let recipient_root = Key::new([27; 32]);
@@ -2697,6 +2757,22 @@ mod tests {
             false,
         )
         .expect("prepare rotated share");
+        // The same device also shares another collection while the source is
+        // still at generation 1.
+        let other = prepare_share_for_device(
+            &mut source,
+            &source_root,
+            source_vault,
+            other_collection_id,
+            IssuerEvidence {
+                membership: &recipient_records,
+                operations: &recipient_operations,
+            },
+            recipient_device,
+            PermissionProfile::Read,
+            true,
+        )
+        .expect("other share");
         let source_operations = sync_log::records_after(&source, &source_device, 0)
             .expect("source operations")
             .iter()
@@ -2731,6 +2807,25 @@ mod tests {
             .expect("reload")
             .expect("sharing");
         assert_eq!(reloaded.generation(), 2);
+        let other_records = [(
+            other.membership().clone(),
+            other.membership_operation().clone(),
+        )];
+        let generation_one = [IssuerMembershipRecord::Enrollment(
+            source_enrollment.clone(),
+        )];
+        accept_share(
+            &mut recipient,
+            &recipient_root,
+            &[IssuerEvidence {
+                membership: &generation_one,
+                operations: &source_operations,
+            }],
+            &other_records,
+            other.grant(),
+            other.grant_operation(),
+        )
+        .expect("accept other collection at generation 1");
 
         // The second recipient receives a grant while the sender is active,
         // but does not open it until the sender device has been revoked.
@@ -2797,7 +2892,137 @@ mod tests {
             PayloadBody::AddDevice(replacement_enrollment.clone()),
         )
         .expect("enroll replacement");
-        let (final_sequence, final_digest) = log.head(&source_device).expect("final source head");
+        // The sender device is still active at generation 2, so it issues a
+        // fresh grant (new permissions force a new membership record). Accepting
+        // it makes generation 2 the high-water mark.
+        let fresh = prepare_share_for_device(
+            &mut source,
+            &source_root,
+            source_vault,
+            collection_id,
+            IssuerEvidence {
+                membership: &recipient_records,
+                operations: &recipient_operations,
+            },
+            recipient_device,
+            PermissionProfile::Contribute,
+            false,
+        )
+        .expect("fresh grant at generation 2");
+        let generation_two = [
+            IssuerMembershipRecord::Enrollment(source_enrollment.clone()),
+            IssuerMembershipRecord::Enrollment(replacement_enrollment.clone()),
+        ];
+        let generation_two_operations = sync_log::records_after(&source, &source_device, 0)
+            .expect("generation two operations")
+            .iter()
+            .map(|bytes| Operation::decode(bytes).expect("operation"))
+            .collect::<Vec<_>>();
+        accept_share(
+            &mut recipient,
+            &recipient_root,
+            &[IssuerEvidence {
+                membership: &generation_two,
+                operations: &generation_two_operations,
+            }],
+            &[
+                collection_records[0].clone(),
+                collection_records[1].clone(),
+                (
+                    late_share.membership().clone(),
+                    late_share.membership_operation().clone(),
+                ),
+                (
+                    fresh.membership().clone(),
+                    fresh.membership_operation().clone(),
+                ),
+            ],
+            fresh.grant(),
+            fresh.grant_operation(),
+        )
+        .expect("accept grant at generation 2");
+        // The relay now withholds the generation 2 enrollment and replays the
+        // generation 1 share of the other collection with a generation 1 chain.
+        let Err(error) = accept_share(
+            &mut recipient,
+            &recipient_root,
+            &[IssuerEvidence {
+                membership: &generation_one,
+                operations: &source_operations,
+            }],
+            &other_records,
+            other.grant(),
+            other.grant_operation(),
+        ) else {
+            panic!("truncated source evidence was accepted");
+        };
+        assert_eq!(error.status(), ChurStatus::AuthenticationFailed);
+        assert_eq!(
+            sharing::issuer_membership_high_water(&recipient, &source_vault).expect("high water"),
+            2
+        );
+        // The honest source supplies current evidence with the same generation 1
+        // grant: the other collection keeps syncing after the mark moved.
+        accept_share(
+            &mut recipient,
+            &recipient_root,
+            &[IssuerEvidence {
+                membership: &generation_two,
+                operations: &generation_two_operations,
+            }],
+            &other_records,
+            other.grant(),
+            other.grant_operation(),
+        )
+        .expect("generation 1 grant replays under generation 2 evidence");
+        // Object key grants are held to the same mark: one signed under the
+        // truncated generation 1 chain is refused before any object is looked up.
+        let object_id = id(80);
+        let prekey = ObjectPrekey::sign(
+            id(81),
+            other_collection_id,
+            object_id,
+            1,
+            [82; 32],
+            recipient_vault,
+            recipient_device,
+            1,
+            &Key::new([83; 32]),
+            rotated_identity.signing_key(),
+        )
+        .expect("object prekey");
+        let object_grant = ObjectKeyGrant::seal(
+            id(84),
+            source_vault,
+            source_device,
+            object_id,
+            1,
+            [82; 32],
+            &prekey,
+            &Key::new([85; 32]),
+            source_identity.signing_key(),
+        )
+        .expect("object grant");
+        let Err(error) = crate::object_grants::accept(
+            &mut recipient,
+            &recipient_root,
+            recipient_vault,
+            &[IssuerEvidence {
+                membership: &generation_one,
+                operations: &source_operations,
+            }],
+            &object_grant,
+        ) else {
+            panic!("object grant under truncated source evidence was accepted");
+        };
+        assert_eq!(error.status(), ChurStatus::AuthenticationFailed);
+        assert!(error.to_string().contains("below an accepted generation"));
+        // The fresh share added operations after `log` was loaded; the
+        // revocation must pin the true head so they stay below its point.
+        let (final_sequence, final_digest) = sync_log::load(&source, &source_membership)
+            .expect("reloaded source log")
+            .head(&source_device)
+            .expect("final source head");
         let revocation = RevocationRecord::new(
             source_vault,
             source_device,

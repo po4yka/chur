@@ -29,9 +29,9 @@ use crate::constants::{
     CATALOG_FORMAT_VERSION_V10, CATALOG_FORMAT_VERSION_V11, CATALOG_FORMAT_VERSION_V12,
     CATALOG_FORMAT_VERSION_V13, CATALOG_FORMAT_VERSION_V14, CATALOG_FORMAT_VERSION_V15,
     CATALOG_FORMAT_VERSION_V16, CATALOG_FORMAT_VERSION_V17, CATALOG_FORMAT_VERSION_V18,
-    CONTAINER_VERSION_V1, CONTAINER_VERSION_V2, CRYPTO_POLICY_V1, DESCRIPTOR_VERSION_V1,
-    ENCODING_PROFILE_V1, FLAGS_V1, MAGIC_VAULT, NAMING_PROFILE_V1, OBJECT_STORE_FORMAT_VERSION_V1,
-    SLOT_VERSION_V1, SUITE_V1, SlotType, VaultState,
+    CATALOG_FORMAT_VERSION_V19, CONTAINER_VERSION_V1, CONTAINER_VERSION_V2, CRYPTO_POLICY_V1,
+    DESCRIPTOR_VERSION_V1, ENCODING_PROFILE_V1, FLAGS_V1, MAGIC_VAULT, NAMING_PROFILE_V1,
+    OBJECT_STORE_FORMAT_VERSION_V1, SLOT_VERSION_V1, SUITE_V1, SlotType, VaultState,
 };
 use crate::slot::{SlotBinding, WRAP_SUITE_ANDROID_KEYSTORE, WRAP_SUITE_RUST};
 
@@ -105,6 +105,7 @@ impl CatalogDescriptor {
                     | CATALOG_FORMAT_VERSION_V16
                     | CATALOG_FORMAT_VERSION_V17
                     | CATALOG_FORMAT_VERSION_V18
+                    | CATALOG_FORMAT_VERSION_V19
             ),
             UnsupportedVersion,
             "catalog format version is not supported"
@@ -633,6 +634,7 @@ impl VaultDescriptor {
                     | CATALOG_FORMAT_VERSION_V16
                     | CATALOG_FORMAT_VERSION_V17
                     | CATALOG_FORMAT_VERSION_V18
+                    | CATALOG_FORMAT_VERSION_V19
             ),
             UnsupportedVersion,
             "catalog format version is not supported"
@@ -894,11 +896,14 @@ mod tests {
         descriptor.catalog.catalog_format_version = CATALOG_FORMAT_VERSION_V18;
         let encoded = descriptor.encode(&root()).expect("catalog v18 descriptor");
         assert_eq!(VaultDescriptor::parse(&encoded).expect("parse"), descriptor);
-        descriptor.catalog.catalog_format_version = 19;
+        descriptor.catalog.catalog_format_version = CATALOG_FORMAT_VERSION_V19;
+        let encoded = descriptor.encode(&root()).expect("catalog v19 descriptor");
+        assert_eq!(VaultDescriptor::parse(&encoded).expect("parse"), descriptor);
+        descriptor.catalog.catalog_format_version = 20;
         assert_eq!(
             descriptor
                 .encode(&root())
-                .expect_err("catalog v19")
+                .expect_err("catalog v20")
                 .status(),
             ChurStatus::UnsupportedVersion
         );

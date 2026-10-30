@@ -75,14 +75,11 @@ struct SpiritScene::Impl {
         // Snapshot the displayed pose, including an interrupted crossfade.
         // Re-sampling only the previous requested clip would cause a jump.
         fadeFrom = displayedPose;
-        if (fadeFrom.size() != rest.size()) {
-            fadeFrom.clear();
-            for (const auto& entry : rest) fadeFrom.push_back(entry.second);
-        }
         fromOpening = lastOpening;
         current = std::move(clip);
         time = 0.f;
-        fade = 0.f;
+        // Nothing displayed yet: start on the clip, as Android does, instead of fading in from the bind pose.
+        fade = fadeFrom.size() == rest.size() ? 0.f : 1.f;
     }
     ~Impl() {
         if (!engine) return;

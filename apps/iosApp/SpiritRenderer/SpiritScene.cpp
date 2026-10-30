@@ -1,5 +1,6 @@
 #include "SpiritScene.hpp"
 #include "SpiritMotion.hpp"
+#include "SpiritPose.hpp"
 #include "SpiritTail.hpp"
 #include <filament/Camera.h>
 #include <filament/Engine.h>
@@ -257,12 +258,7 @@ bool SpiritScene::render(double deltaSeconds) {
         const float alpha = smoothStep(s.fade);
         for (size_t i = 0; i < s.rest.size(); ++i) {
             const auto instance = transforms.getInstance(s.rest[i].first);
-            float3 fromTranslation, fromScale, toTranslation, toScale;
-            quatf fromRotation, toRotation;
-            decomposeMatrix(s.fadeFrom[i], &fromTranslation, &fromRotation, &fromScale);
-            decomposeMatrix(transforms.getTransform(instance), &toTranslation, &toRotation, &toScale);
-            transforms.setTransform(instance, composeMatrix(mix(fromTranslation, toTranslation, alpha),
-                normalize(fromRotation * (1.f-alpha) + toRotation * (dot(fromRotation,toRotation) < 0.f ? -alpha : alpha)), mix(fromScale, toScale, alpha)));
+            transforms.setTransform(instance, blendPose(s.fadeFrom[i], transforms.getTransform(instance), alpha));
         }
     }
     // Snapshot the blended AUTHORED local pose before any procedural transform.

@@ -286,7 +286,8 @@ private class SpiritTexture(context: Context, private val data: ByteArray, priva
         val e = engine ?: return
         if (!resumed || released || !hierarchyVisible() || windowVisibility != VISIBLE) { lastFrame = 0L; motionInputAge = Float.POSITIVE_INFINITY; schedule(); return }
         val dt = if (lastFrame == 0L) 0f else ((time - lastFrame) / 1e9f).coerceAtLeast(0f)
-        if (lastFrame != 0L && time - lastFrame < 33_333_333L) { schedule(); return }
+        // 30fps cap with slack: vsync timestamps jitter, and a strict 33.3ms gate skips every other frame (20fps at 60Hz).
+        if (lastFrame != 0L && time - lastFrame < 30_000_000L) { schedule(); return }
         lastFrame = time
         clipTime += dt; transitionTime += dt; motionInputAge += dt
         val a = asset ?: return

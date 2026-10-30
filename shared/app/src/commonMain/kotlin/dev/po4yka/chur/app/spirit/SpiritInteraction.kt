@@ -83,8 +83,3 @@ fun shouldScheduleSpiritFrame(attached: Boolean, resumed: Boolean, visible: Bool
 /** Cancel even when primary-up and secondary-down arrive in the same dispatch. */
 fun hasSecondarySpiritPointer(primary: Long, pressedIds: List<Long>): Boolean =
     pressedIds.any { it != primary }
-
-/** Public Notes list only; the editor/camera/calculator never host this surface. */
-fun shouldShowSpiritInNotes(enabled: Boolean, searching: Boolean, keyboard: Boolean,
-    trash: Boolean, modal: Boolean, busy: Boolean, disclosure: Boolean): Boolean =
-    enabled && !searching && !keyboard && !trash && !modal && !busy && !disclosure

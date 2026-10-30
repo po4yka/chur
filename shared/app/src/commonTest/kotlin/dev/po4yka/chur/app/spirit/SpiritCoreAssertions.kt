@@ -92,9 +92,4 @@ fun runSpiritCoreChecks() {
     verify(hasSecondarySpiritPointer(1L, listOf(1L,2L)), "second pointer during hold cancels")
     verify(!hasSecondarySpiritPointer(1L, listOf(1L)), "primary pointer remains valid")
     verify(!hasSecondarySpiritPointer(1L, emptyList()), "ordinary up remains valid")
-    for (mask in 0 until 128) {
-        val flags = (0..6).map { mask and (1 shl it) != 0 }
-        verify(shouldShowSpiritInNotes(flags[0],flags[1],flags[2],flags[3],flags[4],flags[5],flags[6]) == (mask == 1),
-            "public Notes presence gate $mask")
-    }
 }

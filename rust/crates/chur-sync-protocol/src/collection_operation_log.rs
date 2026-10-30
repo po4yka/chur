@@ -14,6 +14,16 @@ use crate::state::MembershipState;
 
 type Participant = (Id, Id);
 
+/// What the chain checks decide about one operation, before any state changes.
+enum ChainCheck {
+    /// The operation conflicts with the accepted stream and freezes it.
+    Fork,
+    /// The operation is not committed: a duplicate, a gap, or a missing cause.
+    Held(ApplyOutcome),
+    /// The operation extends its participant chain.
+    Admit,
+}
+
 #[derive(Clone)]
 struct AcceptedHead {
     sequence: u64,
@@ -143,19 +153,25 @@ impl CollectionOperationLog {
             &payload.encode(),
         )?
         .sign(signing_key);
-        let mut candidate = self.clone();
-        ensure!(
-            candidate.accept(
-                &operation,
-                payload,
-                issuer_membership,
-                source_membership,
-                collection_membership,
-            )? == ApplyOutcome::Applied,
-            SyncHeadRollback,
-            "local collection operation chain is not ready to advance"
-        );
-        Ok(operation)
+        self.authorize_accept(
+            &operation,
+            payload,
+            issuer_membership,
+            source_membership,
+            collection_membership,
+        )?;
+        // The checks read the log without committing, so no whole-log clone is needed.
+        match self.check_chain(&operation, source_membership, collection_membership, false)? {
+            ChainCheck::Admit => Ok(operation),
+            ChainCheck::Fork => Err(Error::new(
+                ChurStatus::SyncChainFork,
+                "signed collection operation conflicts with the accepted participant stream",
+            )),
+            ChainCheck::Held(_) => Err(Error::new(
+                ChurStatus::SyncHeadRollback,
+                "local collection operation chain is not ready to advance",
+            )),
+        }
     }
 
     /// Validates and accepts one signed operation from a current participant.
@@ -167,6 +183,64 @@ impl CollectionOperationLog {
         source_membership: &MembershipState,
         collection_membership: &CollectionMembershipState,
     ) -> Result<ApplyOutcome> {
+        self.authorize_accept(
+            operation,
+            payload,
+            issuer_membership,
+            source_membership,
+            collection_membership,
+        )?;
+        self.accept_chain(operation, source_membership, collection_membership, false)
+    }
+
+    /// Exactly undoes the commit of one operation the caller did not persist.
+    ///
+    /// The durable layer takes an accepted operation in before its catalog transaction, so a transaction that fails has to give the log back the state the operation found. The inverse is exact because a commit only appends one record and one operation identifier and replaces exactly the predecessor head the operation chains to. The contract is that the last commit for this exact operation is the one being undone.
+    pub fn undo_accept(&mut self, operation: &CollectionOperation) {
+        let participant = (
+            *operation.issuer_identity_vault_id(),
+            *operation.issuer_device_id(),
+        );
+        let sequence = operation.device_sequence();
+        debug_assert_eq!(
+            self.accepted
+                .get(&(participant.0, participant.1, sequence))
+                .map(|record| record.digest),
+            Some(operation.digest()),
+            "undo_accept names an operation that was not committed"
+        );
+        self.accepted
+            .remove(&(participant.0, participant.1, sequence));
+        self.operation_ids.remove(operation.operation_id());
+        match sequence.checked_sub(1) {
+            None | Some(0) => {
+                self.heads.remove(&participant);
+            }
+            Some(previous) => {
+                self.heads.insert(
+                    participant,
+                    AcceptedHead {
+                        sequence: previous,
+                        digest: *operation.previous_operation_hash(),
+                    },
+                );
+            }
+        }
+    }
+
+    /// Drops fork evidence a caller took in but could not persist.
+    pub fn undo_fork(&mut self, identity_vault_id: &Id, device_id: &Id) {
+        self.forks.remove(&(*identity_vault_id, *device_id));
+    }
+
+    fn authorize_accept(
+        &self,
+        operation: &CollectionOperation,
+        payload: &OperationPayload,
+        issuer_membership: &MembershipState,
+        source_membership: &MembershipState,
+        collection_membership: &CollectionMembershipState,
+    ) -> Result<()> {
         self.validate_context(operation, payload, collection_membership)?;
         collection_membership.authorize_collection_operation(
             operation,
@@ -178,7 +252,7 @@ impl CollectionOperationLog {
             AuthenticationFailed,
             "source membership belongs to another vault"
         );
-        self.accept_chain(operation, source_membership, collection_membership, false)
+        Ok(())
     }
 
     /// Replays one record already committed in the protected local catalog.
@@ -260,6 +334,23 @@ impl CollectionOperationLog {
         collection_membership: &CollectionMembershipState,
         restore: bool,
     ) -> Result<ApplyOutcome> {
+        match self.check_chain(operation, source_membership, collection_membership, restore)? {
+            ChainCheck::Fork => self.freeze(operation),
+            ChainCheck::Held(outcome) => Ok(outcome),
+            ChainCheck::Admit => {
+                self.commit(operation);
+                Ok(ApplyOutcome::Applied)
+            }
+        }
+    }
+
+    fn check_chain(
+        &self,
+        operation: &CollectionOperation,
+        source_membership: &MembershipState,
+        collection_membership: &CollectionMembershipState,
+        restore: bool,
+    ) -> Result<ChainCheck> {
         let participant = (
             *operation.issuer_identity_vault_id(),
             *operation.issuer_device_id(),
@@ -274,9 +365,9 @@ impl CollectionOperationLog {
         let record_key = (participant.0, participant.1, operation.device_sequence());
         if let Some(accepted) = self.accepted.get(&record_key) {
             if accepted.digest == digest {
-                return Ok(ApplyOutcome::Duplicate);
+                return Ok(ChainCheck::Held(ApplyOutcome::Duplicate));
             }
-            return self.freeze(operation);
+            return Ok(ChainCheck::Fork);
         }
         ensure!(
             self.operation_ids
@@ -293,13 +384,13 @@ impl CollectionOperationLog {
                 ));
             }
             if operation.device_sequence() > head.sequence.saturating_add(1) {
-                return Ok(ApplyOutcome::PendingGap);
+                return Ok(ChainCheck::Held(ApplyOutcome::PendingGap));
             }
             if operation.previous_operation_hash() != &head.digest {
-                return self.freeze(operation);
+                return Ok(ChainCheck::Fork);
             }
         } else if operation.device_sequence() != 1 {
-            return Ok(ApplyOutcome::PendingGap);
+            return Ok(ChainCheck::Held(ApplyOutcome::PendingGap));
         }
 
         for observed in operation.observed_heads() {
@@ -329,10 +420,19 @@ impl CollectionOperationLog {
                 .get(&observed_participant)
                 .is_none_or(|head| head.sequence < observed.device_sequence())
             {
-                return Ok(ApplyOutcome::PendingCause);
+                return Ok(ChainCheck::Held(ApplyOutcome::PendingCause));
             }
         }
+        Ok(ChainCheck::Admit)
+    }
 
+    fn commit(&mut self, operation: &CollectionOperation) {
+        let participant = (
+            *operation.issuer_identity_vault_id(),
+            *operation.issuer_device_id(),
+        );
+        let digest = operation.digest();
+        let record_key = (participant.0, participant.1, operation.device_sequence());
         self.accepted.insert(
             record_key,
             AcceptedRecord {
@@ -348,7 +448,6 @@ impl CollectionOperationLog {
                 digest,
             },
         );
-        Ok(ApplyOutcome::Applied)
     }
 
     /// Latest accepted head for one identity-vault device pair.

@@ -299,8 +299,15 @@ impl DurableCollectionOperationLog {
                 "object lifecycle requires content-cause validation"
             );
         }
-        let mut candidate = self.log.clone();
-        let accepted = candidate.accept(
+        // The log takes the operation in place and every refusal below gives it back with the exact inverse, so no whole-log clone runs per operation.
+        let was_forked = self
+            .log
+            .fork(
+                operation.issuer_identity_vault_id(),
+                operation.issuer_device_id(),
+            )
+            .is_some();
+        let accepted = self.log.accept(
             operation,
             payload,
             issuer_membership,
@@ -309,47 +316,20 @@ impl DurableCollectionOperationLog {
         );
         match accepted {
             Ok(ApplyOutcome::Applied) => {
-                let next_revision = self.revision.checked_add(1).ok_or_else(|| {
-                    Error::new(
-                        ChurStatus::ResourceLimitExceeded,
-                        "collection log revision overflowed",
-                    )
-                })?;
-                if let Some(keys) = keys {
-                    ensure_object_index(db, operation.key_selector(), keys)?;
-                    let cause = crate::sharing_receive::validate_lifecycle_candidate(
-                        db,
-                        keys,
-                        collection_membership.source_vault_id(),
-                        operation,
-                        payload,
-                    )?;
-                    if cause == ApplyOutcome::PendingCause {
-                        return Ok(ApplyOutcome::PendingCause);
+                match self.persist_applied(db, keys, operation, payload, collection_membership) {
+                    Ok(Some(next_revision)) => {
+                        self.revision = next_revision;
+                        Ok(ApplyOutcome::Applied)
                     }
-                    ensure!(
-                        cause == ApplyOutcome::Applied,
-                        InternalFailure,
-                        "lifecycle validator returned an invalid state"
-                    );
+                    Ok(None) => {
+                        self.log.undo_accept(operation);
+                        Ok(ApplyOutcome::PendingCause)
+                    }
+                    Err(error) => {
+                        self.log.undo_accept(operation);
+                        Err(error)
+                    }
                 }
-                db.transaction(|transaction| {
-                    ensure_stream(
-                        transaction,
-                        self.log.collection_id(),
-                        self.log.collection_epoch(),
-                        self.log.key_selector(),
-                    )?;
-                    insert_operation(transaction, operation)?;
-                    insert_object_event(transaction, operation, payload)?;
-                    hide_accepted_shared_delete(transaction, payload)?;
-                    crate::deletion::project_purge(transaction, payload)?;
-                    bump_log_revision(transaction, self.log.key_selector())?;
-                    bump_generation(transaction)
-                })?;
-                self.log = candidate;
-                self.revision = next_revision;
-                Ok(ApplyOutcome::Applied)
             }
             Ok(ApplyOutcome::Duplicate) => {
                 check_stored_operation(db, operation)?;
@@ -357,13 +337,20 @@ impl DurableCollectionOperationLog {
             }
             Ok(outcome @ (ApplyOutcome::PendingGap | ApplyOutcome::PendingCause)) => Ok(outcome),
             Err(error) if error.status() == ChurStatus::SyncChainFork => {
-                let next_revision = self.revision.checked_add(1).ok_or_else(|| {
-                    Error::new(
+                let Some(next_revision) = self.revision.checked_add(1) else {
+                    if !was_forked {
+                        self.log.undo_fork(
+                            operation.issuer_identity_vault_id(),
+                            operation.issuer_device_id(),
+                        );
+                    }
+                    return Err(Error::new(
                         ChurStatus::ResourceLimitExceeded,
                         "collection log revision overflowed",
-                    )
-                })?;
-                let evidence = candidate
+                    ));
+                };
+                let evidence = self
+                    .log
                     .fork(
                         operation.issuer_identity_vault_id(),
                         operation.issuer_device_id(),
@@ -374,7 +361,7 @@ impl DurableCollectionOperationLog {
                             "collection fork has no evidence",
                         )
                     })?;
-                db.transaction(|transaction| {
+                let persisted = db.transaction(|transaction| {
                     transaction
                         .execute(
                             "INSERT INTO sharing_operation_forks
@@ -397,13 +384,71 @@ impl DurableCollectionOperationLog {
                         })?;
                     bump_log_revision(transaction, self.log.key_selector())?;
                     bump_generation(transaction)
-                })?;
-                self.log = candidate;
+                });
+                if let Err(persist_error) = persisted {
+                    if !was_forked {
+                        self.log.undo_fork(
+                            operation.issuer_identity_vault_id(),
+                            operation.issuer_device_id(),
+                        );
+                    }
+                    return Err(persist_error);
+                }
                 self.revision = next_revision;
                 Err(error)
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// Persists one operation the log has just taken in; `None` means its lifecycle cause is pending.
+    fn persist_applied(
+        &self,
+        db: &mut CatalogDb,
+        keys: Option<&KeyDirectory>,
+        operation: &CollectionOperation,
+        payload: &OperationPayload,
+        collection_membership: &CollectionMembershipState,
+    ) -> Result<Option<u64>> {
+        let next_revision = self.revision.checked_add(1).ok_or_else(|| {
+            Error::new(
+                ChurStatus::ResourceLimitExceeded,
+                "collection log revision overflowed",
+            )
+        })?;
+        if let Some(keys) = keys {
+            ensure_object_index(db, operation.key_selector(), keys)?;
+            let cause = crate::sharing_receive::validate_lifecycle_candidate(
+                db,
+                keys,
+                collection_membership.source_vault_id(),
+                operation,
+                payload,
+            )?;
+            if cause == ApplyOutcome::PendingCause {
+                return Ok(None);
+            }
+            ensure!(
+                cause == ApplyOutcome::Applied,
+                InternalFailure,
+                "lifecycle validator returned an invalid state"
+            );
+        }
+        db.transaction(|transaction| {
+            ensure_stream(
+                transaction,
+                self.log.collection_id(),
+                self.log.collection_epoch(),
+                self.log.key_selector(),
+            )?;
+            insert_operation(transaction, operation)?;
+            insert_object_event(transaction, operation, payload)?;
+            hide_accepted_shared_delete(transaction, payload)?;
+            crate::deletion::project_purge(transaction, payload)?;
+            bump_log_revision(transaction, self.log.key_selector())?;
+            bump_generation(transaction)
+        })?;
+        Ok(Some(next_revision))
     }
 
     /// Latest accepted head for one participant.
@@ -1364,6 +1409,24 @@ mod tests {
             .expect("source"),
             ApplyOutcome::Applied
         );
+        // A failed SQL commit must leave the in-memory log exactly as it was.
+        insert_operation_raw_v5(&db, &recipient);
+        let refused = log.accept(
+            &mut db,
+            &recipient,
+            &payload,
+            &recipient_membership,
+            &source_membership,
+            &collection_membership,
+        );
+        assert!(refused.is_err());
+        assert_eq!(log.head(&id(3), &id(4)), None);
+        db.connection()
+            .execute(
+                "DELETE FROM sharing_operations WHERE operation_id = ?1",
+                params![id(8).as_bytes().as_slice()],
+            )
+            .expect("clear");
         assert_eq!(
             log.accept(
                 &mut db,

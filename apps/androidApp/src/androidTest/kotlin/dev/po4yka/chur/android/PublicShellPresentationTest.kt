@@ -58,7 +58,7 @@ class PublicShellPresentationTest {
             val before = f.bounds("Chur companion")
             f.gesture("Chur companion", 100f, -100f, 250)
             assertTrue(f.await { f.bounds("Chur companion").left > before.left + 50f })
-            f.gesture("☾ Sleep", 0f, 0f, 800)
+            f.gesture("Sleep", 0f, 0f, 800)
             assertTrue(f.await { f.has("Access code") })
             f.confirm("Cancel")
             assertTrue(f.has("Chur companion"))
@@ -102,9 +102,9 @@ class PublicShellPresentationTest {
             f.click("Toy")
             assertTrue(f.await { f.has("Put toy away") })
             f.click("Put toy away")
-            f.click("☾ Sleep")
+            f.click("Sleep")
             assertTrue(f.await { f.has("Chur is sleeping") })
-            f.click("☾ Wake")
+            f.click("Wake")
             assertTrue(f.await { f.has("Chur companion") })
             f.capture("pet-awake.png")
         }
@@ -114,12 +114,12 @@ class PublicShellPresentationTest {
     fun pet_long_press_does_not_sleep_and_background_revokes_code_input() {
         val epoch = mutableStateOf(0L)
         present(scale = 1f, nativeSurface = true, content = { dev.po4yka.chur.app.publicshell.PetScreen({}, { false }, epoch.value) }) { f ->
-            f.hold("☾ Sleep")
+            f.hold("Sleep")
             assertTrue(f.await { f.has("Access code") })
             f.confirm("Cancel")
             assertTrue(f.await { f.has("Chur companion") })
             assertFalse(f.has("Chur is sleeping"))
-            f.hold("☾ Sleep")
+            f.hold("Sleep")
             assertTrue(f.await { f.has("Access code") })
             f.main { epoch.value++ }
             assertTrue(f.await { !f.has("Access code") })

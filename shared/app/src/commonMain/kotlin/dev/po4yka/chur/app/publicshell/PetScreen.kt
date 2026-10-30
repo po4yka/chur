@@ -12,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -150,12 +151,18 @@ fun PetScreen(onOpenSettings: () -> Unit, onSubmitCode: (String) -> Boolean,
                     toy = pet.toyOffer(sizePx).let { (x, y) -> Offset(x, y) }
                     act(PetAction.TOY)
                 }) { Text(utilityText(if (pet.activity == PetActivity.TOY) "Put toy away" else "Toy", if (pet.activity == PetActivity.TOY) "Убрать игрушку" else "Игрушка")) }
-                Box(Modifier.guideTarget("sleep").combinedClickable(
+                // TextButton has no long press, so match its role, shape, and text style by hand.
+                Row(Modifier.guideTarget("sleep").clip(ButtonDefaults.textShape).combinedClickable(
+                    role = Role.Button,
                     onClick = { act(PetAction.SLEEP); event(GuideStep.PET_SLEEP) },
                     onLongClickLabel = accessLabel, onLongClick = { enteringCode = true },
                 ).semantics {
                     customActions = listOf(CustomAccessibilityAction(accessLabel) { enteringCode = true; true })
-                }.heightIn(min = 48.dp).padding(horizontal = 16.dp), contentAlignment = Alignment.Center) { Text("☾ $sleepLabel") }
+                }.heightIn(min = 48.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val style = MaterialTheme.typography.labelLarge.copy(color = MaterialTheme.colorScheme.primary)
+                    Text("☾ ", Modifier.clearAndSetSemantics {}, style = style)
+                    Text(sleepLabel, style = style)
+                }
             }
         }
     }

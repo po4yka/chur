@@ -100,9 +100,9 @@ class PrivateOnboardingTest {
             field("New 8-digit transition code", "01234567")
             field("Try the code again", "01234567")
             click("Test entry and enable")
-            assertTrue(await { has("☾ Sleep") })
+            assertTrue(await { has("Sleep") })
             assertFalse(has("Finish tutorial"))
-            main { assertTrue(find("☾ Sleep")!!.config[SemanticsActions.OnLongClick].action?.invoke() == true) }
+            main { assertTrue(find("Sleep")!!.config[SemanticsActions.OnLongClick].action?.invoke() == true) }
             field("8-digit code", "01234567")
             click("Continue")
             assertTrue(await { has("Unlock") })

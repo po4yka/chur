@@ -93,9 +93,9 @@ final class PrivateOnboardingTests: XCTestCase {
         field("Try the code again", "01234567")
         dismissKeyboard()
         tap("Test entry and enable")
-        XCTAssertTrue(app.buttons["☾ Sleep"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["Sleep"].waitForExistence(timeout: 20))
         XCTAssertFalse(app.buttons["Finish tutorial"].exists)
-        app.buttons["☾ Sleep"].press(forDuration: 0.8)
+        app.buttons["Sleep"].press(forDuration: 0.8)
         field("8-digit code", "01234567")
         tap("Continue")
         XCTAssertTrue(app.buttons["Unlock"].waitForExistence(timeout: 15))
@@ -108,8 +108,8 @@ final class PrivateOnboardingTests: XCTestCase {
             XCTAssertTrue(iconAlert.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'icon'")).firstMatch.exists)
             iconAlert.buttons["OK"].tap()
         }
-        if app.buttons["☾ Sleep"].waitForExistence(timeout: 5) {
-            app.buttons["☾ Sleep"].press(forDuration: 0.8)
+        if app.buttons["Sleep"].waitForExistence(timeout: 5) {
+            app.buttons["Sleep"].press(forDuration: 0.8)
             field("8-digit code", "01234567")
             tap("Continue")
             field("Password", password)

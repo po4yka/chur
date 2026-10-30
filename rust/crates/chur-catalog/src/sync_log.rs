@@ -523,11 +523,17 @@ impl DurableOperationLog {
                 Ok(outcome)
             }
             Err(error) if error.status() == ChurStatus::SyncChainFork => {
+                let encoded = checkpoint.encode();
                 let device_id = checkpoint
                     .heads()
                     .iter()
                     .map(|head| head.device_id())
-                    .find(|device_id| self.log.fork(device_id).is_some())
+                    .find(|device_id| {
+                        // Earlier forks of other devices stay in the log, so only evidence that holds this checkpoint names the device that just conflicted.
+                        self.log
+                            .fork(device_id)
+                            .is_some_and(|evidence| evidence.conflicting_record() == encoded)
+                    })
                     .ok_or_else(|| {
                         Error::new(
                             ChurStatus::InternalFailure,
@@ -2129,5 +2135,54 @@ mod tests {
                 .expect("coverage"),
             "the dropped heads do not read as a changed set"
         );
+    }
+
+    #[test]
+    fn a_checkpoint_fork_is_recorded_for_the_device_that_conflicted() {
+        let (mut db, membership, key) = setup();
+        let second_key = DeviceSigningKey::from_seed([7; 32]);
+        enroll_second_device(&mut db, &membership, &key, &second_key);
+        let membership = sync_membership::load(&db)
+            .expect("load")
+            .expect("membership");
+        let mut log = load(&db, &membership).expect("log");
+        let first = operation(&key, 1, [0; 32], 5);
+        let second_first = operation_from(id(6), &second_key, 1, [0; 32], 20);
+        for record in [&first, &second_first] {
+            log.accept_with(&mut db, record, &membership, |_| Ok(()))
+                .expect("accepted");
+        }
+        // The lower-sorting device is already frozen from an earlier conflict.
+        let earlier = checkpoint(&key, 1, [9; 32], &membership);
+        assert!(
+            log.accept_checkpoint(&mut db, &earlier, &membership, false, 9)
+                .is_err()
+        );
+        assert!(log.forked_devices.contains(&id(3)));
+
+        let conflict = Checkpoint::new(
+            id(1),
+            id(3),
+            1,
+            membership.generation(),
+            *membership.commitment(),
+            vec![
+                CheckpointHead::new(id(3), 1, first.digest()),
+                CheckpointHead::new(id(6), 1, [9; 32]),
+            ],
+            [6; 32],
+            [0; 32],
+        )
+        .expect("checkpoint")
+        .sign(&key);
+        assert_eq!(
+            log.accept_checkpoint(&mut db, &conflict, &membership, false, 10)
+                .expect_err("fork")
+                .status(),
+            ChurStatus::SyncChainFork
+        );
+        assert!(log.forked_devices.contains(&id(6)));
+        let restored = load(&db, &membership).expect("restore");
+        assert!(restored.forked_devices.contains(&id(6)));
     }
 }

@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use chur_core::limits::sync as bounds;
 use chur_core::{ChurStatus, Error, Id, Result, ensure};
 use chur_crypto::Commitment;
 
@@ -110,6 +111,18 @@ impl MembershipState {
         record.verify_signature(&issuer_key)?;
 
         let mut historical_signing_keys = Vec::new();
+        if !self.devices.contains_key(record.device_id()) {
+            let active = self
+                .devices
+                .values()
+                .filter(|device| device.status == DeviceStatus::Active)
+                .count();
+            ensure!(
+                active < bounds::ACTIVE_DEVICES_MAX,
+                ResourceLimitExceeded,
+                "enrollment exceeds the active device limit"
+            );
+        }
         if let Some(existing) = self.devices.get(record.device_id()) {
             ensure!(
                 record.device_id() == record.issuer_device_id()
@@ -388,5 +401,69 @@ mod tests {
             .copied()
             .collect();
         assert_eq!(keys, vec![new_key.verifying_key(), old_key.verifying_key()]);
+    }
+
+    #[test]
+    fn enrollment_beyond_the_active_device_limit_is_rejected() {
+        let key = DeviceSigningKey::from_seed([1; 32]);
+        let initial = EnrollmentRecord::initial(id(1), id(2), key.verifying_key(), [3; 32])
+            .expect("initial")
+            .sign(&key);
+        let mut state = MembershipState::bootstrap(&initial).expect("bootstrap");
+        let mut previous = initial.commitment();
+        let enroll = |device: u8, generation: u64, previous| {
+            EnrollmentRecord::new(
+                id(1),
+                id(device),
+                key.verifying_key(),
+                [6; 32],
+                generation,
+                id(2),
+                generation,
+                previous,
+                [7; 32],
+            )
+            .expect("enrollment")
+            .sign(&key)
+        };
+        for generation in 2..=32_u64 {
+            let record = enroll(
+                u8::try_from(generation).expect("byte") + 10,
+                generation,
+                previous,
+            );
+            state
+                .accept_enrollment(&record, &id(2), generation)
+                .expect("within the limit");
+            previous = record.commitment();
+        }
+        let overflow = enroll(99, 33, previous);
+        assert_eq!(
+            state
+                .accept_enrollment(&overflow, &id(2), 33)
+                .expect_err("33rd active device")
+                .status(),
+            ChurStatus::ResourceLimitExceeded,
+        );
+        assert_eq!(state.generation(), 32);
+        assert!(!state.is_active(&id(99)));
+        // A key rotation for an existing device does not add a device.
+        let rotation = enroll(2, 33, previous);
+        state
+            .accept_enrollment(&rotation, &id(2), 33)
+            .expect("rotation at the limit");
+        previous = rotation.commitment();
+        // A revoked device no longer counts, so revocation makes room.
+        let revocation = RevocationRecord::new(id(1), id(12), 1, [8; 32], 34, id(2), previous)
+            .expect("revocation")
+            .sign(&key);
+        state
+            .accept_revocation(&revocation, &id(2))
+            .expect("revoke one device");
+        previous = revocation.commitment();
+        state
+            .accept_enrollment(&enroll(99, 35, previous), &id(2), 35)
+            .expect("enrollment after a revocation");
+        assert!(state.is_active(&id(99)));
     }
 }

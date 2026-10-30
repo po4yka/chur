@@ -319,6 +319,12 @@ pub fn approve(
         Conflict,
         "pairing device is already enrolled"
     );
+    // Fail before publishing or checkpointing; accept_enrollment stays authoritative.
+    ensure!(
+        membership.active_device_ids().count() < chur_core::limits::sync::ACTIVE_DEVICES_MAX,
+        ResourceLimitExceeded,
+        "vault already has the maximum number of active devices"
+    );
     // Publish inherited local objects before the checkpoint. Otherwise the new
     // source replica could independently author a second creation for one ID.
     for collection in own_sync::collection_ids(db)? {

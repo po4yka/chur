@@ -271,6 +271,8 @@ pub mod backup {
 
 /// Sync operation bounds, `docs/sync/OPERATION_LOG.md` §4 and §12.
 pub mod sync {
+    /// Active devices in one vault, so every active device can observe all others.
+    pub const ACTIVE_DEVICES_MAX: usize = OBSERVED_HEADS_MAX + 1;
     /// Other-device heads one operation may observe.
     pub const OBSERVED_HEADS_MAX: usize = 31;
     /// Exact encoded length of one observed head.

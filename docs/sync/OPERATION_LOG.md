@@ -86,7 +86,7 @@ Encoding follows [`../format/CANONICAL_ENCODING_V1.md`](../format/CANONICAL_ENCO
 - the authoring device is excluded, so `(device_id, device_sequence)` together with `observed_heads` is the complete causal position of the operation;
 - one entry is present for every other device from which the author has accepted at least one operation, and for no other device;
 - `device_sequence` is the highest sequence accepted from that device;
-- a vault has at most 32 active devices, so `observed_heads` holds at most 31 entries, 748 bytes including the count.
+- a vault has at most 32 active devices, so `observed_heads` holds at most 31 entries, 748 bytes including the count; a receiver rejects an enrollment of a new device identifier while 32 devices are active with `ResourceLimitExceeded`, and a key rotation of an existing device is not counted again.
 
 ### 4.2 Happens-before
 

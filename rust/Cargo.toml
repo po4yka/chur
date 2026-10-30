@@ -50,7 +50,7 @@ chacha20poly1305 = { version = "0.11", default-features = false, features = ["al
 ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["fast", "zeroize"] }
 # Phase 4 wraps one collection key with the frozen RFC 9180 profile. Exact on
 # first adoption; no PQ, NIST-curve, AES, serialization, or KAT feature.
-hpke = { version = "=0.14.1", default-features = false, features = ["alloc", "getrandom", "x25519", "chacha"] }
+hpke = { version = "=0.15.1", default-features = false, features = ["alloc", "getrandom", "x25519", "chacha"] }
 # Phase 3 portable key agreement. Exact on first adoption; randomness stays in
 # chur-crypto and persisted bytes use Chur's canonical codec.
 x25519-dalek = { version = "=3.0.0", default-features = false, features = ["static_secrets", "zeroize"] }
@@ -72,7 +72,7 @@ unicode-normalization = { version = "0.1", default-features = false }
 # requires the FTS5 module the same SQLite build already carries. Default
 # features are off: they add a WebAssembly VFS and its wasm-bindgen graph that
 # no Chur target uses.
-rusqlite = { version = "0.40", default-features = false, features = [
+rusqlite = { version = "0.41", default-features = false, features = [
     "bundled-sqlcipher-vendored-openssl",
     "column_decltype",
     "limits",

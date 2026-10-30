@@ -13,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -84,21 +85,23 @@ fun PetScreen(onOpenSettings: () -> Unit, onSubmitCode: (String) -> Boolean,
         IconButton(onClick = onOpenSettings) { Icon(SettingsGlyph, utilityText("Settings", "Настройки")) }
     }) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            Box(Modifier.weight(1f).fillMaxWidth().onSizeChanged {
+            Box(Modifier.weight(1f).fillMaxWidth().clipToBounds().onSizeChanged {
                 room = it.width >= sizePx && it.height >= sizePx
+                toy = Offset(toy.x.coerceIn(0f, it.width.toFloat()), toy.y.coerceIn(0f, it.height.toFloat()))
                 pet = pet.copy(interaction = pet.interaction.bounds(it.width.toFloat(), it.height.toFloat(), sizePx).up(true))
                 if (!placed && room) {
                     pet = pet.copy(interaction = pet.interaction.copy(x = pet.interaction.maxX / 2, y = pet.interaction.maxY / 2))
                     toy = Offset(it.width / 2f, it.height / 2f); placed = true
                 }
             }.pointerInput(pet.activity, sizePx) {
+                fun inside(p: Offset) = Offset(p.x.coerceIn(0f, size.width.toFloat()), p.y.coerceIn(0f, size.height.toFloat()))
                 if (pet.activity == PetActivity.TOY) awaitEachGesture {
-                    val down = awaitFirstDown(); toy = down.position; down.consume()
+                    val down = awaitFirstDown(); toy = inside(down.position); down.consume()
                     while (true) {
                         val changes = awaitPointerEvent().changes
                         val current = changes.firstOrNull { it.id == down.id } ?: break
                         if (hasSecondarySpiritPointer(down.id.value, changes.filter { it.pressed }.map { it.id.value }) || !current.pressed) break
-                        toy = current.position; current.consume()
+                        toy = inside(current.position); current.consume()
                     }
                 }
             }) {

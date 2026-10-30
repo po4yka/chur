@@ -37,6 +37,12 @@ confidence-threshold = 0.93
 # The allow list above is the reviewed set for the whole workspace, so a
 # license no crate currently carries is expected rather than a finding.
 unused-allowed-license = "allow"
+# The SQLCipher amalgamation of ADR-0038, a build dependency of libsqlite3-sys.
+# SQLite is public domain ("blessing"); WTFPL covers the bundled libtomcrypt
+# source, which the build does not compile because OpenSSL is the provider.
+exceptions = [
+    { name = "sqlcipher-src", allow = ["blessing", "WTFPL"] },
+]
 
 [bans]
 multiple-versions = "warn"

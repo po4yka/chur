@@ -1,5 +1,6 @@
 //! Atomic inbound acceptance for encrypted sync operations.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use chur_core::{ChurStatus, Error, Id, Result, ensure};
@@ -536,6 +537,35 @@ pub fn accept_sharing_operation(
     )
 }
 
+/// Identity-vault membership at the generation a sharing record was authored at.
+///
+/// The author stamps its own generation; a sibling that has since accepted an
+/// unrelated enrollment or revocation is ahead of it. Checking the record
+/// against the receiver's newer state returned `AuthenticationFailed`, which
+/// `sync_engine` treats as a verdict: the record left the inbox and the
+/// author's chain stalled there.
+fn record_issuer_state<'a>(
+    db: &CatalogDb,
+    current: &'a MembershipState,
+    payload: &OperationPayload,
+) -> Result<Cow<'a, MembershipState>> {
+    let generation = match payload.body() {
+        PayloadBody::ChangeCollectionMembership(record) => record.issuer_membership_generation(),
+        PayloadBody::IssueCollectionGrant(grant) => grant.sender_membership_generation(),
+        _ => return Ok(Cow::Borrowed(current)),
+    };
+    if generation >= current.generation() {
+        return Ok(Cow::Borrowed(current));
+    }
+    let historical = sync_membership::load_at_generation(db, generation)?;
+    ensure!(
+        historical.vault_id() == current.vault_id(),
+        AuthenticationFailed,
+        "sharing record issuer belongs to another vault"
+    );
+    Ok(Cow::Owned(historical))
+}
+
 /// Commits one authorized sharing operation.
 ///
 /// `provision` writes the collection's own sharing row in the same transaction.
@@ -555,6 +585,7 @@ fn accept_opened_sharing_operation(
     provision: bool,
 ) -> Result<ApplyOutcome> {
     sharing_state.authorize_operation(operation, payload, issuer_membership)?;
+    let record_issuer = record_issuer_state(db, issuer_membership, payload)?;
     let mut projected_sharing = None;
     let outcome = log.accept_with(db, operation, issuer_membership, |transaction| {
         if provision {
@@ -563,7 +594,7 @@ fn accept_opened_sharing_operation(
         match payload.body() {
             PayloadBody::ChangeCollectionMembership(record) => {
                 let (candidate, membership_outcome) =
-                    sharing::project_membership(transaction, sharing_state, record, issuer_membership)?;
+                    sharing::project_membership(transaction, sharing_state, record, &record_issuer)?;
                 ensure!(
                     membership_outcome
                         == chur_sync_protocol::collection_membership::CollectionMembershipOutcome::Applied,
@@ -573,7 +604,7 @@ fn accept_opened_sharing_operation(
                 projected_sharing = Some(candidate);
             }
             PayloadBody::IssueCollectionGrant(grant) => ensure!(
-                sharing::project_grant(transaction, sharing_state, grant, issuer_membership)?
+                sharing::project_grant(transaction, sharing_state, grant, &record_issuer)?
                     == sharing::GrantStoreOutcome::Stored,
                 InternalFailure,
                 "fresh sharing operation carried duplicate grant"

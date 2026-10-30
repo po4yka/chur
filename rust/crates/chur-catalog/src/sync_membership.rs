@@ -67,7 +67,37 @@ pub fn load(db: &CatalogDb) -> Result<Option<MembershipState>> {
     let stored_generation =
         from_sqlite_integer(stored_generation, "the membership generation is negative")?;
     let stored_commitment = commitment(&stored_commitment, "the membership head is malformed")?;
+    let state = replay_chain(db, None)?;
+    ensure!(
+        state.generation() == stored_generation && state.commitment() == &stored_commitment,
+        CatalogCorrupt,
+        "sync state contradicts the membership chain"
+    );
+    validate_device_projections(db, &state)?;
+    Ok(Some(state))
+}
 
+/// Replays the local chain up to one earlier accepted generation.
+///
+/// A sharing record names the issuer generation it was authored at. A sibling
+/// that has since accepted another enrollment or revocation verifies it against
+/// that historical state, as `sharing_service` does for external issuers.
+pub(crate) fn load_at_generation(db: &CatalogDb, generation: u64) -> Result<MembershipState> {
+    ensure!(
+        generation != 0,
+        AuthenticationFailed,
+        "issuer membership generation is absent"
+    );
+    let state = replay_chain(db, Some(generation))?;
+    ensure!(
+        state.generation() == generation,
+        AuthenticationFailed,
+        "issuer membership generation is absent"
+    );
+    Ok(state)
+}
+
+fn replay_chain(db: &CatalogDb, through: Option<u64>) -> Result<MembershipState> {
     let mut statement = db
         .connection()
         .prepare(
@@ -99,6 +129,9 @@ pub fn load(db: &CatalogDb) -> Result<Option<MembershipState>> {
             .get(4)
             .map_err(|error| map_sqlite(error, "a membership record could not be read"))?;
         let generation = from_sqlite_integer(generation, "a membership generation is negative")?;
+        if through.is_some_and(|limit| generation > limit) {
+            break;
+        }
         let device_id = crate::row::id(&device_bytes, "a membership device id is malformed")?;
         let stored = commitment(&commitment_bytes, "a membership commitment is malformed")?;
 
@@ -148,19 +181,12 @@ pub fn load(db: &CatalogDb) -> Result<Option<MembershipState>> {
             _ => bail!(CatalogCorrupt, "a membership record kind is unallocated"),
         }
     }
-    let state = state.ok_or_else(|| {
+    state.ok_or_else(|| {
         Error::new(
             ChurStatus::CatalogCorrupt,
             "sync state has no membership chain",
         )
-    })?;
-    ensure!(
-        state.generation() == stored_generation && state.commitment() == &stored_commitment,
-        CatalogCorrupt,
-        "sync state contradicts the membership chain"
-    );
-    validate_device_projections(db, &state)?;
-    Ok(Some(state))
+    })
 }
 
 /// Authenticated historical key pairs for one local device, in generation order.

@@ -1193,6 +1193,28 @@ fn inbound_sharing_membership_routes_through_accept_operation() {
     .expect("operation")
     .sign(&fixture.issuer);
 
+    // The receiver accepts an unrelated enrollment first, so it is a generation
+    // ahead of the one the record was authored at. That used to be a permanent
+    // `AuthenticationFailed` rejection.
+    let peer = DeviceSigningKey::from_seed([98; 32]);
+    let enrollment = EnrollmentRecord::new(
+        id(2),
+        id(99),
+        peer.verifying_key(),
+        [100; 32],
+        3,
+        id(4),
+        2,
+        *fixture.membership.commitment(),
+        [101; 32],
+    )
+    .expect("enrollment")
+    .sign(&fixture.issuer);
+    fixture.membership =
+        sync_membership::accept_enrollment(&mut fixture.db, &enrollment, &id(4), 3)
+            .expect("later enrollment");
+    assert_eq!(fixture.membership.generation(), 2);
+
     let mut log = sync_log::load(&fixture.db, &fixture.membership).expect("log");
     let mut state = MaterializedState::new();
     assert_eq!(
@@ -1217,6 +1239,63 @@ fn inbound_sharing_membership_routes_through_accept_operation() {
         &record.commitment()
     );
     assert_eq!(log.head(&id(4)), Some((1, operation.digest())));
+
+    // The grant arm names its sender generation separately; it is the same
+    // generation-one state, so the sibling accepts it at generation two too.
+    let grant = CollectionGrant::seal(
+        id(102),
+        id(2),
+        collection_id,
+        1,
+        1,
+        id(93),
+        id(94),
+        &[95; 32],
+        id(4),
+        PermissionProfile::Read,
+        1,
+        2,
+        &collection_key,
+        &fixture.issuer,
+    )
+    .expect("grant");
+    let grant_payload = OperationPayload::new(
+        collection_id,
+        1,
+        PayloadBody::IssueCollectionGrant(grant.clone()),
+    )
+    .expect("grant payload");
+    let grant_operation = Operation::seal(
+        id(102),
+        id(2),
+        id(4),
+        2,
+        operation.digest(),
+        Vec::new(),
+        *domain.selector(),
+        domain.operation_key(),
+        Nonce::new([103; 24]),
+        &grant_payload.encode(),
+    )
+    .expect("grant operation")
+    .sign(&fixture.issuer);
+    assert_eq!(
+        sync_receive::accept_operation(
+            &mut fixture.db,
+            &mut log,
+            &mut fixture.membership,
+            &mut state,
+            &mut keys,
+            &fixture.root,
+            1,
+            &grant_operation.encode(),
+        )
+        .expect("inbound sharing grant"),
+        ApplyOutcome::Applied
+    );
+    assert!(
+        sharing::load_grants(&fixture.db, &collection_id).is_ok_and(|stored| stored == [grant])
+    );
 }
 
 #[test]

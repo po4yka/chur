@@ -25,7 +25,7 @@ fun main() {
 #include <iomanip>
 int main(){ using namespace chur; std::cout<<std::setprecision(9);
  for(auto clip : {'''+','.join('"'+c+'"' for c in clips)+'''}) for(int hz:{30,60,120}) for(int frame=0;frame<=hz*5;frame++){
- auto sample=sampleClip(clip,float(frame)/hz,false); auto opening=eyeOpening(sample.name,sample.seconds, sample.name=="idle_soft"?4.f:sample.name=="hold_loop"?1.2f:sample.name=="hold_enter"?.2f:sample.name=="sleep_enter"?1.f:sample.name=="sleep_loop"?3.f:sample.name=="wake"?.7f:sample.name=="notice"?.6f:.8f);
+ auto sample=sampleClip(clip,float(frame)/hz,false); auto opening=eyeOpening(sample.name,sample.seconds);
  std::cout<<clip<<"/"<<hz<<"/"<<frame<<" "<<sample.name<<" "<<sample.seconds<<" "<<opening;
  for(auto w:apertureWeights(opening))std::cout<<" "<<w;std::cout<<"\\n";
  }

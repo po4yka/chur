@@ -54,8 +54,20 @@ inline float blinkOpening(float seconds, float start, float closedFrom, float cl
     if (seconds <= closedUntil) return 0.f;
     return smoothStep((seconds - closedUntil) / (end - closedUntil));
 }
-inline float eyeOpening(const std::string& clip, float clipTime, float duration) {
-    const float t = std::clamp(clipTime / std::max(duration, .001f), 0.f, 1.f);
+// Fixed authored lengths, as in Kotlin SpiritEyes; exported clip lengths may round differently.
+inline float clipDuration(const std::string& clip) {
+    if (clip == "idle_soft") return 4.f;
+    if (clip == "notice") return .6f;
+    if (clip == "tap_react" || clip == "release_settle") return .8f;
+    if (clip == "hold_enter") return .2f;
+    if (clip == "hold_loop") return 1.2f;
+    if (clip == "sleep_enter") return 1.f;
+    if (clip == "sleep_loop") return 3.f;
+    if (clip == "wake") return .7f;
+    return 1.f;
+}
+inline float eyeOpening(const std::string& clip, float clipTime) {
+    const float t = std::clamp(clipTime / clipDuration(clip), 0.f, 1.f);
     const float u = smoothStep(t);
     float opening = 1.f;
     if (clip == "idle_soft") opening = blinkOpening(clipTime, 2.60f, 2.66f, 2.78f, 2.90f);

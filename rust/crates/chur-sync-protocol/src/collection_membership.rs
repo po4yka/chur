@@ -18,6 +18,26 @@ const SIGNATURE_LEN: usize = 64;
 const UPSERT_ACTION: u8 = 1;
 const REVOKE_ACTION: u8 = 2;
 
+/// Verdict on an authenticated collection operation that needs no further evidence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CollectionAuthorization {
+    /// The issuer may author the operation.
+    Authorized,
+    /// The issuer can never author the operation. The reason names the rule.
+    Forbidden(&'static str),
+}
+
+/// Only a source-vault device issues object-key grants and owns object lifecycle roots.
+fn requires_source_vault(body: &PayloadBody) -> bool {
+    matches!(
+        body,
+        PayloadBody::CreateObject { .. }
+            | PayloadBody::CommitObject { .. }
+            | PayloadBody::RewrapObjectKey { .. }
+            | PayloadBody::PurgeObject { .. }
+    )
+}
+
 /// One collection membership action.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CollectionMembershipAction {
@@ -632,14 +652,15 @@ impl CollectionMembershipState {
         Ok(())
     }
 
-    /// Authorizes one content operation from a collection-scoped stream.
-    pub fn authorize_collection_operation(
+    /// Authenticates the issuer of a collection-scoped record against current membership.
+    ///
+    /// Every failure depends on membership evidence or the signature, so a caller
+    /// that holds fresher evidence can succeed on retry. The payload is not read.
+    pub fn authenticate_collection_issuer(
         &self,
         operation: &CollectionOperation,
-        payload: &OperationPayload,
         issuer_membership: &MembershipState,
     ) -> Result<()> {
-        payload.validate_for_collection_operation(&self.collection_id, self.collection_epoch)?;
         ensure!(
             issuer_membership.vault_id() == operation.issuer_identity_vault_id(),
             AuthenticationFailed,
@@ -662,14 +683,6 @@ impl CollectionMembershipState {
         if operation.issuer_identity_vault_id() == &self.source_vault_id {
             return Ok(());
         }
-        ensure!(
-            !matches!(
-                payload.body(),
-                PayloadBody::RewrapObjectKey { .. } | PayloadBody::PurgeObject { .. }
-            ),
-            AuthenticationFailed,
-            "object-key rewrap requires a source-vault device"
-        );
         let member = self
             .member(
                 operation.issuer_identity_vault_id(),
@@ -682,14 +695,65 @@ impl CollectionMembershipState {
                 )
             })?;
         ensure!(
-            member.active
-                && member.signing_public_key == *issuer.signing_public_key()
-                && (member.permissions as u8 & PermissionProfile::Contribute as u8)
-                    == PermissionProfile::Contribute as u8,
+            member.active && member.signing_public_key == *issuer.signing_public_key(),
             AuthenticationFailed,
-            "collection operation issuer lacks contribute permission"
+            "collection operation issuer is not an active collection member"
         );
         Ok(())
+    }
+
+    /// Decides whether an authenticated issuer may author one collection operation.
+    ///
+    /// `Err` is an authentication failure that membership evidence can still change.
+    /// `Forbidden` depends only on the signed record and the issuer's accepted
+    /// permission, so the record can never be accepted and a receiver may skip it.
+    pub fn classify_collection_operation(
+        &self,
+        operation: &CollectionOperation,
+        payload: &OperationPayload,
+        issuer_membership: &MembershipState,
+    ) -> Result<CollectionAuthorization> {
+        payload.validate_for_collection_operation(&self.collection_id, self.collection_epoch)?;
+        self.authenticate_collection_issuer(operation, issuer_membership)?;
+        if operation.issuer_identity_vault_id() == &self.source_vault_id {
+            return Ok(CollectionAuthorization::Authorized);
+        }
+        if requires_source_vault(payload.body()) {
+            return Ok(CollectionAuthorization::Forbidden(
+                "this operation kind requires a source-vault device",
+            ));
+        }
+        let permitted = self
+            .member(
+                operation.issuer_identity_vault_id(),
+                operation.issuer_device_id(),
+            )
+            .is_some_and(|member| {
+                (member.permissions as u8 & PermissionProfile::Contribute as u8)
+                    == PermissionProfile::Contribute as u8
+            });
+        Ok(if permitted {
+            CollectionAuthorization::Authorized
+        } else {
+            CollectionAuthorization::Forbidden(
+                "collection operation issuer lacks contribute permission",
+            )
+        })
+    }
+
+    /// Authorizes one content operation from a collection-scoped stream.
+    pub fn authorize_collection_operation(
+        &self,
+        operation: &CollectionOperation,
+        payload: &OperationPayload,
+        issuer_membership: &MembershipState,
+    ) -> Result<()> {
+        match self.classify_collection_operation(operation, payload, issuer_membership)? {
+            CollectionAuthorization::Authorized => Ok(()),
+            CollectionAuthorization::Forbidden(reason) => {
+                Err(Error::new(ChurStatus::AuthenticationFailed, reason))
+            }
+        }
     }
 
     /// Explicitly verifies or replaces one recipient key pin.

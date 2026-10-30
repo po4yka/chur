@@ -316,6 +316,7 @@ mod tests {
             source_vault_id: vault,
             collection_id: collection,
             pending_operations: 7,
+            rejected_operations: 0,
             objects: vec![SharedObject {
                 source_vault_id: vault,
                 collection_id: collection,

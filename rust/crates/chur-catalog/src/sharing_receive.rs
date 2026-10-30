@@ -19,6 +19,7 @@ use chur_sync_protocol::{
 use crate::db::{as_sqlite_integer, map_sqlite};
 use crate::model::{Object, Stream};
 use crate::schema::bump_generation;
+use crate::sharing_log::Accepted;
 use crate::{CatalogDb, sharing, sharing_log, sharing_service, store, sync_keys, sync_membership};
 use rusqlite::params;
 
@@ -58,6 +59,8 @@ pub struct ReceivePlan {
     pub objects: Vec<SharedObject>,
     /// Records awaiting an earlier signed chain step or causal predecessor.
     pub pending_operations: usize,
+    /// Records skipped because their authenticated issuer can never have authored them. Rust only; the FFI plan encoding omits it.
+    pub rejected_operations: usize,
 }
 
 /// Applies one bounded page only after the issuer chain and addressed grant verify.
@@ -141,8 +144,8 @@ pub fn receive(
             )
         })?;
     let mut pending_operations = 0;
+    let mut rejected_operations = 0;
     for record in records {
-        let payload = OperationPayload::open_for_collection_operation(record, &keys)?;
         let issuer = memberships
             .get(record.issuer_identity_vault_id())
             .ok_or_else(|| {
@@ -151,7 +154,19 @@ pub fn receive(
                     "collection operation issuer is unknown",
                 )
             })?;
-        match log.accept_with_keys(
+        // A key that has not arrived is local state: the page fails so a retry can open the record.
+        keys.domain(record.key_selector())?;
+        let payload = match OperationPayload::open_for_collection_operation(record, &keys) {
+            Ok(payload) => payload,
+            // With the key held, opening is a function of the record bytes alone, so every
+            // failure (seal, version, size, encoding, binding, kind) is the issuer's own.
+            Err(_) => {
+                collection_state.authenticate_collection_issuer(record, issuer)?;
+                rejected_operations += 1;
+                continue;
+            }
+        };
+        let outcome = log.accept_with_keys(
             db,
             &keys,
             record,
@@ -159,9 +174,13 @@ pub fn receive(
             issuer,
             source,
             &collection_state,
-        )? {
-            ApplyOutcome::Applied | ApplyOutcome::Duplicate => {}
-            ApplyOutcome::PendingGap | ApplyOutcome::PendingCause => pending_operations += 1,
+        )?;
+        match outcome {
+            Accepted::Outcome(ApplyOutcome::Applied | ApplyOutcome::Duplicate) => {}
+            Accepted::Outcome(ApplyOutcome::PendingGap | ApplyOutcome::PendingCause) => {
+                pending_operations += 1;
+            }
+            Accepted::Rejected => rejected_operations += 1,
         }
     }
     sharing_log::store_cached_log(db, selector, log)?;
@@ -172,6 +191,7 @@ pub fn receive(
         collection_id: *collection_state.collection_id(),
         objects,
         pending_operations,
+        rejected_operations,
     })
 }
 
@@ -193,6 +213,7 @@ pub fn pending_for_collection(
         collection_id,
         objects,
         pending_operations: 0,
+        rejected_operations: 0,
     })
 }
 
@@ -405,13 +426,19 @@ pub(crate) fn validate_lifecycle_candidate(
     source_vault_id: &Id,
     record: &CollectionOperation,
     payload: &OperationPayload,
-) -> Result<ApplyOutcome> {
+) -> Result<Accepted> {
     let object_id = match payload.body() {
-        PayloadBody::DeleteObject { object_id, .. }
+        PayloadBody::CreateObject { object_id, .. }
+        | PayloadBody::CommitObject { object_id, .. }
+        | PayloadBody::DeleteObject { object_id, .. }
         | PayloadBody::PurgeObject { object_id, .. }
         | PayloadBody::RestoreObject { object_id, .. } => *object_id,
-        _ => return Ok(ApplyOutcome::Applied),
+        _ => return Ok(Accepted::Outcome(ApplyOutcome::Applied)),
     };
+    let creation = matches!(
+        payload.body(),
+        PayloadBody::CreateObject { .. } | PayloadBody::CommitObject { .. }
+    );
     let mut records = Vec::new();
     sharing_log::visit_object_records(
         db,
@@ -427,12 +454,17 @@ pub(crate) fn validate_lifecycle_candidate(
         CausalStamp::from_collection_operation(record),
         payload.clone(),
     ));
-    let (_, missing) = project_drafts(&records, source_vault_id)?;
-    Ok(if missing == 0 {
+    // Projection reads no state beyond these records, and the stored ones already projected,
+    // so any failure is the candidate's.
+    let Ok((_, missing)) = project_drafts(&records, source_vault_id) else {
+        return Ok(Accepted::Rejected);
+    };
+    // A creation or commit never waits: projection keeps a commit until its creation arrives.
+    Ok(Accepted::Outcome(if missing == 0 || creation {
         ApplyOutcome::Applied
     } else {
         ApplyOutcome::PendingCause
-    })
+    }))
 }
 
 /// Refuses legacy accepted lifecycle records that cannot converge before

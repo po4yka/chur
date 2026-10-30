@@ -1115,6 +1115,7 @@ fn pending_for_collection_in(
         collection_id,
         objects,
         pending_operations: state.pending_operations(Some(&collection_id)),
+        rejected_operations: 0,
     })
 }
 

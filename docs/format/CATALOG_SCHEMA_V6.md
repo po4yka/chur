@@ -6,7 +6,7 @@ Catalog v6 extends [`CATALOG_SCHEMA_V5.md`](CATALOG_SCHEMA_V5.md). The tables st
 
 ## 1. Accepted object events
 
-`sharing_object_operations` maps each object event to its stored signed record. Its key is `(key_selector, object_id, operation_id)`. A foreign key binds it to `sharing_operations`. The event kind identifies CreateObject, CommitObject, DeleteObject, RestoreObject, or RewrapObjectKey. A unique index permits at most one CreateObject and one CommitObject for an object in one collection epoch.
+`sharing_object_operations` maps each object event to its stored signed record. Its key is `(key_selector, object_id, operation_id)`. A foreign key binds it to `sharing_operations`. The event kind identifies CreateObject, CommitObject, DeleteObject, RestoreObject, or RewrapObjectKey. A unique index permits at most one CreateObject and one CommitObject for an object in one collection epoch. Only a source-vault device can author CreateObject and CommitObject, so a recipient skips any such record from another issuer, and a repeated creation or commit, before it stores the record. The skip does not fail the rest of the received page.
 
 `sharing_object_projection` has one row per indexed object. `revision` increases for each accepted object event. `dirty` is set in the same transaction as the event. Recipient reconciliation clears it only if the revision still matches. The `(key_selector, dirty, object_id)` index supplies a bounded queue without a wire cursor.
 

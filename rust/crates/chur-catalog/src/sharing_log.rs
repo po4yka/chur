@@ -7,7 +7,7 @@ use chur_crypto::{Commitment, Key, Nonce};
 use chur_format::constants::{IntegritySummary, ObjectState};
 use chur_sync_protocol::{
     KeyDirectory,
-    collection_membership::CollectionMembershipState,
+    collection_membership::{CollectionAuthorization, CollectionMembershipState},
     collection_operation::CollectionOperation,
     collection_operation_log::CollectionOperationLog,
     convergence::CausalStamp,
@@ -29,6 +29,24 @@ type StoredOperation = (Vec<u8>, Vec<u8>, i64, Vec<u8>, Vec<u8>, Vec<u8>);
 #[cfg(test)]
 thread_local! {
     static LOG_LOADS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Result of keyed acceptance, which can also refuse a record for good.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Accepted {
+    /// The log handled the record as the protocol outcome says.
+    Outcome(ApplyOutcome),
+    /// The record is authenticated but is not accepted, and no operation row of it was stored.
+    /// A permanent verdict, or a record of a member stream that forked.
+    Rejected,
+}
+
+/// What persisting a freshly accepted operation did.
+enum Persisted {
+    /// The operation is stored and the log revision moves to this value.
+    Stored(u64),
+    /// The operation was not stored; the caller undoes the in-place accept and reports this.
+    Refused(Accepted),
 }
 
 /// One durable locally authored record that the transport must publish.
@@ -219,7 +237,7 @@ impl DurableCollectionOperationLog {
                 issuer_membership,
                 source_membership,
                 collection_membership
-            )? == ApplyOutcome::Applied,
+            )? == Accepted::Outcome(ApplyOutcome::Applied),
             InternalFailure,
             "fresh lifecycle operation was not accepted"
         );
@@ -236,7 +254,7 @@ impl DurableCollectionOperationLog {
         source_membership: &MembershipState,
         collection_membership: &CollectionMembershipState,
     ) -> Result<ApplyOutcome> {
-        self.accept_inner(
+        match self.accept_inner(
             db,
             None,
             operation,
@@ -244,7 +262,13 @@ impl DurableCollectionOperationLog {
             issuer_membership,
             source_membership,
             collection_membership,
-        )
+        )? {
+            Accepted::Outcome(outcome) => Ok(outcome),
+            Accepted::Rejected => Err(Error::new(
+                ChurStatus::InternalFailure,
+                "keyless acceptance cannot reject a record",
+            )),
+        }
     }
 
     /// Accepts object lifecycle records only after their content cause verifies.
@@ -261,7 +285,7 @@ impl DurableCollectionOperationLog {
         issuer_membership: &MembershipState,
         source_membership: &MembershipState,
         collection_membership: &CollectionMembershipState,
-    ) -> Result<ApplyOutcome> {
+    ) -> Result<Accepted> {
         self.accept_inner(
             db,
             Some(keys),
@@ -286,7 +310,7 @@ impl DurableCollectionOperationLog {
         issuer_membership: &MembershipState,
         source_membership: &MembershipState,
         collection_membership: &CollectionMembershipState,
-    ) -> Result<ApplyOutcome> {
+    ) -> Result<Accepted> {
         if matches!(
             payload.body(),
             PayloadBody::DeleteObject { .. }
@@ -298,6 +322,14 @@ impl DurableCollectionOperationLog {
                 AuthenticationFailed,
                 "object lifecycle requires content-cause validation"
             );
+        }
+        // Keyless callers cannot report a refusal, so the log rejects the record below instead.
+        // The verdict is read only, so it runs before the log is touched.
+        if keys.is_some()
+            && let CollectionAuthorization::Forbidden(_) = collection_membership
+                .classify_collection_operation(operation, payload, issuer_membership)?
+        {
+            return Ok(Accepted::Rejected);
         }
         // The log takes the operation in place and every refusal below gives it back with the exact inverse, so no whole-log clone runs per operation.
         let was_forked = self
@@ -317,13 +349,13 @@ impl DurableCollectionOperationLog {
         match accepted {
             Ok(ApplyOutcome::Applied) => {
                 match self.persist_applied(db, keys, operation, payload, collection_membership) {
-                    Ok(Some(next_revision)) => {
+                    Ok(Persisted::Stored(next_revision)) => {
                         self.revision = next_revision;
-                        Ok(ApplyOutcome::Applied)
+                        Ok(Accepted::Outcome(ApplyOutcome::Applied))
                     }
-                    Ok(None) => {
+                    Ok(Persisted::Refused(refusal)) => {
                         self.log.undo_accept(operation);
-                        Ok(ApplyOutcome::PendingCause)
+                        Ok(refusal)
                     }
                     Err(error) => {
                         self.log.undo_accept(operation);
@@ -333,9 +365,11 @@ impl DurableCollectionOperationLog {
             }
             Ok(ApplyOutcome::Duplicate) => {
                 check_stored_operation(db, operation)?;
-                Ok(ApplyOutcome::Duplicate)
+                Ok(Accepted::Outcome(ApplyOutcome::Duplicate))
             }
-            Ok(outcome @ (ApplyOutcome::PendingGap | ApplyOutcome::PendingCause)) => Ok(outcome),
+            Ok(outcome @ (ApplyOutcome::PendingGap | ApplyOutcome::PendingCause)) => {
+                Ok(Accepted::Outcome(outcome))
+            }
             Err(error) if error.status() == ChurStatus::SyncChainFork => {
                 let Some(next_revision) = self.revision.checked_add(1) else {
                     if !was_forked {
@@ -395,13 +429,21 @@ impl DurableCollectionOperationLog {
                     return Err(persist_error);
                 }
                 self.revision = next_revision;
+                // A member's equivocation freezes only that member's stream, so the page goes on.
+                // A source device that forks still fails the page.
+                if keys.is_some()
+                    && operation.issuer_identity_vault_id()
+                        != collection_membership.source_vault_id()
+                {
+                    return Ok(Accepted::Rejected);
+                }
                 Err(error)
             }
             Err(error) => Err(error),
         }
     }
 
-    /// Persists one operation the log has just taken in; `None` means its lifecycle cause is pending.
+    /// Persists one operation the log has just taken in; a refusal means the caller must undo the in-place accept.
     fn persist_applied(
         &self,
         db: &mut CatalogDb,
@@ -409,7 +451,7 @@ impl DurableCollectionOperationLog {
         operation: &CollectionOperation,
         payload: &OperationPayload,
         collection_membership: &CollectionMembershipState,
-    ) -> Result<Option<u64>> {
+    ) -> Result<Persisted> {
         let next_revision = self.revision.checked_add(1).ok_or_else(|| {
             Error::new(
                 ChurStatus::ResourceLimitExceeded,
@@ -425,11 +467,14 @@ impl DurableCollectionOperationLog {
                 operation,
                 payload,
             )?;
-            if cause == ApplyOutcome::PendingCause {
-                return Ok(None);
+            if matches!(
+                cause,
+                Accepted::Rejected | Accepted::Outcome(ApplyOutcome::PendingCause)
+            ) {
+                return Ok(Persisted::Refused(cause));
             }
             ensure!(
-                cause == ApplyOutcome::Applied,
+                cause == Accepted::Outcome(ApplyOutcome::Applied),
                 InternalFailure,
                 "lifecycle validator returned an invalid state"
             );
@@ -448,7 +493,7 @@ impl DurableCollectionOperationLog {
             bump_log_revision(transaction, self.log.key_selector())?;
             bump_generation(transaction)
         })?;
-        Ok(Some(next_revision))
+        Ok(Persisted::Stored(next_revision))
     }
 
     /// Latest accepted head for one participant.
@@ -1988,7 +2033,7 @@ mod tests {
                     &state
                 )
                 .expect("missing generation stays pending"),
-                ApplyOutcome::PendingCause
+                Accepted::Outcome(ApplyOutcome::PendingCause)
             );
             let state_before: i64 = db
                 .connection()
@@ -2010,7 +2055,7 @@ mod tests {
                     &state
                 )
                 .expect("accepted"),
-                ApplyOutcome::Applied
+                Accepted::Outcome(ApplyOutcome::Applied)
             );
             let row: (i64, i64) = db
                 .connection()
@@ -2030,5 +2075,313 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn a_member_cannot_author_source_only_or_unpermitted_records_whatever_the_order() {
+        let create = PayloadBody::CreateObject {
+            object_id: id(6),
+            object_generation: 1,
+            store_id: id(7),
+            stream_id: id(7),
+            metadata_fields: Vec::new(),
+        };
+        let commit = |container: u8| PayloadBody::CommitObject {
+            object_id: id(6),
+            object_generation: 1,
+            store_id: id(7),
+            container_length: 1,
+            container_commitment: [container; 32],
+            object_key_commitment: [container; 32],
+        };
+        // A Contribute member may not sign the source-only kinds, nor may a READ member sign any.
+        let forged_cases = [
+            (PermissionProfile::Contribute, create.clone()),
+            (PermissionProfile::Contribute, commit(9)),
+            (
+                PermissionProfile::Contribute,
+                PayloadBody::PurgeObject {
+                    object_id: id(6),
+                    object_generation: 1,
+                    authored_at_ms: 1,
+                },
+            ),
+            (
+                PermissionProfile::Contribute,
+                PayloadBody::RewrapObjectKey {
+                    object_id: id(6),
+                    object_key_commitment: [2; 32],
+                },
+            ),
+            (
+                PermissionProfile::Read,
+                PayloadBody::SetFavorite {
+                    object_id: id(6),
+                    favorite: true,
+                    removed_tokens: Vec::new(),
+                },
+            ),
+        ];
+        for member_first in [true, false] {
+            for (profile, forged_body) in &forged_cases {
+                let mut db = open();
+                let (source_key, source_membership) = identity(id(1), id(2), 10);
+                let (member_key, member_membership) = identity(id(3), id(4), 20);
+                sharing::provision(&mut db, id(1), id(5), 1).expect("sharing");
+                let grant = CollectionMembershipRecord::new(
+                    id(1),
+                    id(5),
+                    1,
+                    [0; 32],
+                    CollectionMembershipAction::Upsert(*profile),
+                    id(3),
+                    id(4),
+                    member_key.verifying_key(),
+                    [21; 32],
+                    1,
+                    id(1),
+                    id(2),
+                    1,
+                    1,
+                )
+                .expect("grant")
+                .sign(&source_key);
+                let state = sharing::accept_membership(&mut db, &grant, &source_membership)
+                    .expect("member")
+                    .0;
+                let domain = KeyDomain::collection(&Key::new([30; 32]), &id(5), 1).expect("domain");
+                let selector = *domain.selector();
+                let seal = |op: u8, vault: Id, device: Id, prior: [u8; 32], body: &PayloadBody| {
+                    let payload = OperationPayload::new(id(5), 1, body.clone()).expect("payload");
+                    let record = CollectionOperation::seal(
+                        id(op),
+                        vault,
+                        device,
+                        if prior == [0; 32] { 1 } else { 2 },
+                        prior,
+                        Vec::new(),
+                        selector,
+                        domain.operation_key(),
+                        Nonce::new([op; 24]),
+                        &payload.encode(),
+                    )
+                    .expect("operation");
+                    let signed = if vault == id(1) {
+                        record.sign(&source_key)
+                    } else {
+                        record.sign(&member_key)
+                    };
+                    (signed, payload)
+                };
+                let source_create = seal(8, id(1), id(2), [0; 32], &create);
+                let source_commit = seal(9, id(1), id(2), source_create.0.digest(), &commit(2));
+                // The member signs a rival creation or commit of the source's object.
+                let forged = seal(10, id(3), id(4), [0; 32], forged_body);
+                let mut keys = KeyDirectory::new(&Key::new([32; 32]), &id(1)).expect("keys");
+                keys.insert(domain).expect("domain");
+                let mut log = DurableCollectionOperationLog::provision(&mut db, id(5), 1, selector)
+                    .expect("log");
+                let page = if member_first {
+                    [&forged, &source_create, &source_commit]
+                } else {
+                    [&source_create, &source_commit, &forged]
+                };
+                let verdicts = page
+                    .iter()
+                    .map(|(record, payload)| {
+                        let issuer = if record.issuer_identity_vault_id() == &id(1) {
+                            &source_membership
+                        } else {
+                            &member_membership
+                        };
+                        log.accept_with_keys(
+                            &mut db,
+                            &keys,
+                            record,
+                            payload,
+                            issuer,
+                            &source_membership,
+                            &state,
+                        )
+                        .expect("accepted")
+                    })
+                    .collect::<Vec<_>>();
+                let applied = Accepted::Outcome(ApplyOutcome::Applied);
+                let expected = if member_first {
+                    [
+                        Accepted::Rejected,
+                        applied,
+                        Accepted::Outcome(ApplyOutcome::Applied),
+                    ]
+                } else {
+                    [
+                        applied,
+                        Accepted::Outcome(ApplyOutcome::Applied),
+                        Accepted::Rejected,
+                    ]
+                };
+                assert_eq!(verdicts, expected);
+                // The rejected record is not stored, and the source's commit is the one planned.
+                let rows: Vec<Vec<u8>> = db
+                    .connection()
+                    .prepare("SELECT operation_id FROM sharing_operations ORDER BY device_sequence")
+                    .expect("prepare")
+                    .query_map([], |row| row.get(0))
+                    .expect("rows")
+                    .collect::<std::result::Result<_, _>>()
+                    .expect("ids");
+                assert_eq!(
+                    rows,
+                    vec![id(8).as_bytes().to_vec(), id(9).as_bytes().to_vec()]
+                );
+                let planned =
+                    crate::sharing_receive::pending_objects(&mut db, &keys, &state, &selector)
+                        .expect("planned");
+                assert_eq!(planned.len(), 1);
+                assert_eq!(planned[0].container_commitment, [2; 32]);
+            }
+        }
+    }
+
+    #[test]
+    fn a_member_fork_is_recorded_and_skipped_but_a_source_fork_fails_the_page() {
+        let mut db = open();
+        let (source_key, source_membership) = identity(id(1), id(2), 10);
+        let (member_key, member_membership) = identity(id(3), id(4), 20);
+        sharing::provision(&mut db, id(1), id(5), 1).expect("sharing");
+        let grant = CollectionMembershipRecord::new(
+            id(1),
+            id(5),
+            1,
+            [0; 32],
+            CollectionMembershipAction::Upsert(PermissionProfile::Contribute),
+            id(3),
+            id(4),
+            member_key.verifying_key(),
+            [21; 32],
+            1,
+            id(1),
+            id(2),
+            1,
+            1,
+        )
+        .expect("grant")
+        .sign(&source_key);
+        let state = sharing::accept_membership(&mut db, &grant, &source_membership)
+            .expect("member")
+            .0;
+        let domain = KeyDomain::collection(&Key::new([30; 32]), &id(5), 1).expect("domain");
+        let selector = *domain.selector();
+        let seal = |op: u8, vault: Id, device: Id, sequence: u64, prior: [u8; 32], object: u8| {
+            let payload = OperationPayload::new(
+                id(5),
+                1,
+                PayloadBody::SetFavorite {
+                    object_id: id(object),
+                    favorite: true,
+                    removed_tokens: Vec::new(),
+                },
+            )
+            .expect("payload");
+            let record = CollectionOperation::seal(
+                id(op),
+                vault,
+                device,
+                sequence,
+                prior,
+                Vec::new(),
+                selector,
+                domain.operation_key(),
+                Nonce::new([op; 24]),
+                &payload.encode(),
+            )
+            .expect("operation");
+            let signed = if vault == id(1) {
+                record.sign(&source_key)
+            } else {
+                record.sign(&member_key)
+            };
+            (signed, payload)
+        };
+        let member_first = seal(8, id(3), id(4), 1, [0; 32], 6);
+        let member_rival = seal(9, id(3), id(4), 1, [0; 32], 7);
+        let member_later = seal(10, id(3), id(4), 2, member_first.0.digest(), 6);
+        let source_first = seal(11, id(1), id(2), 1, [0; 32], 6);
+        let source_rival = seal(12, id(1), id(2), 1, [0; 32], 7);
+        let mut keys = KeyDirectory::new(&Key::new([32; 32]), &id(1)).expect("keys");
+        keys.insert(domain).expect("domain");
+        let mut log =
+            DurableCollectionOperationLog::provision(&mut db, id(5), 1, selector).expect("log");
+        let mut accept =
+            |db: &mut CatalogDb, (record, payload): &(CollectionOperation, OperationPayload)| {
+                let issuer = if record.issuer_identity_vault_id() == &id(1) {
+                    &source_membership
+                } else {
+                    &member_membership
+                };
+                log.accept_with_keys(
+                    db,
+                    &keys,
+                    record,
+                    payload,
+                    issuer,
+                    &source_membership,
+                    &state,
+                )
+            };
+        let forks = |db: &CatalogDb, vault: u8| -> i64 {
+            db.connection()
+                .query_row(
+                    "SELECT count(*) FROM sharing_operation_forks WHERE issuer_identity_vault_id = ?1",
+                    [id(vault).as_bytes().as_slice()],
+                    |row| row.get(0),
+                )
+                .expect("fork rows")
+        };
+        assert_eq!(
+            accept(&mut db, &member_first).expect("first"),
+            Accepted::Outcome(ApplyOutcome::Applied)
+        );
+        // The rival freezes the member stream and is skipped once its evidence is durable.
+        assert_eq!(
+            accept(&mut db, &member_rival).expect("rival"),
+            Accepted::Rejected
+        );
+        assert_eq!(forks(&db, 3), 1);
+        // Later records of the frozen stream, also on a later page, are skipped too.
+        assert_eq!(
+            accept(&mut db, &member_later).expect("later"),
+            Accepted::Rejected
+        );
+        assert_eq!(
+            accept(&mut db, &member_first).expect("repeat"),
+            Accepted::Rejected
+        );
+        assert_eq!(forks(&db, 3), 1);
+        // The source stream is unaffected by the member fork.
+        assert_eq!(
+            accept(&mut db, &source_first).expect("source"),
+            Accepted::Outcome(ApplyOutcome::Applied)
+        );
+        // A source device that forks still fails the page, after its evidence is stored.
+        assert_eq!(
+            accept(&mut db, &source_rival)
+                .expect_err("source fork")
+                .status(),
+            ChurStatus::SyncChainFork
+        );
+        assert_eq!(forks(&db, 1), 1);
+        let rows: Vec<Vec<u8>> = db
+            .connection()
+            .prepare("SELECT operation_id FROM sharing_operations ORDER BY operation_id")
+            .expect("prepare")
+            .query_map([], |row| row.get(0))
+            .expect("rows")
+            .collect::<std::result::Result<_, _>>()
+            .expect("ids");
+        assert_eq!(
+            rows,
+            vec![id(8).as_bytes().to_vec(), id(11).as_bytes().to_vec()]
+        );
     }
 }

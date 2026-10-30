@@ -99,7 +99,7 @@ The only v1 permission profiles are cumulative:
 0x07 MANAGE_MEMBERS  = CONTRIBUTE | 0x04
 ```
 
-Every other byte fails closed. `READ` accepts replicated content state. `CONTRIBUTE` additionally authors ordinary collection operations. `MANAGE_MEMBERS` additionally issues, changes, and revokes grants. Permissions affect accepted signed operations, not ciphertext ability already granted. A recipient with a collection key can decrypt all objects in that epoch available to it.
+Every other byte fails closed. `READ` accepts replicated content state. `CONTRIBUTE` additionally authors ordinary collection operations, but not `CreateObject`, `CommitObject`, `RewrapObjectKey`, or `PurgeObject`, which only a source-vault device authors. `MANAGE_MEMBERS` additionally issues, changes, and revokes grants. Permissions affect accepted signed operations, not ciphertext ability already granted. A recipient with a collection key can decrypt all objects in that epoch available to it.
 
 ## 7. Multiple devices
 

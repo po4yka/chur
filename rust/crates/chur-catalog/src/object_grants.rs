@@ -562,6 +562,7 @@ mod tests {
     use chur_format::envelope::CollectionKeyEnvelope;
     use chur_sync_protocol::{
         KeyDomain,
+        collection_operation::CollectionOperation,
         operation::Operation,
         payload::{OperationPayload, PayloadBody},
     };
@@ -645,6 +646,37 @@ mod tests {
             true,
         )
         .expect("authorized share");
+        // A Contribute member whose modified client signs records recipients must skip.
+        let member_vault = id(43);
+        let member_root = Key::new([41; 32]);
+        let mut member_db = CatalogDb::open(
+            &CatalogLocation::Memory,
+            &CatalogKey::derive(&member_root, &member_vault).expect("member key"),
+        )
+        .expect("member");
+        schema::open_at_current_version(&mut member_db, 1).expect("member schema");
+        let (member_enrollment, _) =
+            sync_receive::provision_local_identity(&mut member_db, &member_root, member_vault)
+                .expect("member identity");
+        let member_membership = sync_membership::load(&member_db)
+            .expect("membership")
+            .expect("present");
+        let (_, member_identity) =
+            sync_keys::local_identity(&member_db, &member_root, &member_membership)
+                .expect("member identity")
+                .expect("present");
+        let member_share = (!check_scope).then(|| {
+            sharing_service::prepare_share(
+                &mut source,
+                &source_root,
+                source_vault,
+                collection,
+                &member_enrollment,
+                PermissionProfile::Contribute,
+                true,
+            )
+            .expect("member share")
+        });
         let records = sync_log::records_after(&source, source_enrollment.device_id(), 0)
             .expect("source evidence")
             .iter()
@@ -653,14 +685,32 @@ mod tests {
         let membership_records = [sharing_service::IssuerMembershipRecord::Enrollment(
             source_enrollment.clone(),
         )];
-        let issuers = [sharing_service::IssuerEvidence {
+        let member_records = [sharing_service::IssuerMembershipRecord::Enrollment(
+            member_enrollment.clone(),
+        )];
+        let member_evidence = sync_log::records_after(&member_db, member_enrollment.device_id(), 0)
+            .expect("member evidence")
+            .iter()
+            .map(|bytes| Operation::decode(bytes).expect("operation"))
+            .collect::<Vec<_>>();
+        let mut issuers = vec![sharing_service::IssuerEvidence {
             membership: &membership_records,
             operations: &records,
         }];
-        let changes = [(
+        let mut changes = vec![(
             prepared.membership().clone(),
             prepared.membership_operation().clone(),
         )];
+        if let Some(share) = &member_share {
+            issuers.push(sharing_service::IssuerEvidence {
+                membership: &member_records,
+                operations: &member_evidence,
+            });
+            changes.push((
+                share.membership().clone(),
+                share.membership_operation().clone(),
+            ));
+        }
         let source_membership = sync_membership::load(&source)
             .expect("membership")
             .expect("present");
@@ -719,6 +769,100 @@ mod tests {
             }
             objects.push((object, content));
         }
+        // The rejected record stalls its device chain, so only a variant without later records from that device injects it.
+        let rejected_id = random::id().expect("operation id");
+        if !check_scope {
+            // A modified client signs a second creation for an existing object.
+            // Recipients must skip it, not fail the page. This test signs it
+            // with the source device; the foreign-issuer cases are unit tests in sharing_log.
+            source
+                .transaction(|transaction| {
+                    transaction
+                        .execute("DROP INDEX sharing_object_single_create_commit", [])
+                        .map_err(|error| crate::db::map_sqlite(error, "index drop"))
+                })
+                .expect("attacker client has no unique index");
+            commits.push(
+                log.author(
+                    &mut source,
+                    rejected_id,
+                    source_vault,
+                    *source_enrollment.device_id(),
+                    domain.operation_key(),
+                    Nonce::random().expect("nonce"),
+                    &OperationPayload::new(
+                        collection,
+                        1,
+                        PayloadBody::CreateObject {
+                            object_id: objects[0].0,
+                            object_generation: 1,
+                            store_id: objects[0].0,
+                            stream_id: objects[0].0,
+                            metadata_fields: vec![],
+                        },
+                    )
+                    .expect("payload"),
+                    identity.signing_key(),
+                    &source_membership,
+                    &source_membership,
+                    &shared,
+                )
+                .expect("signed repeated creation"),
+            );
+        }
+        // The member signs a purge, which only the source may author, a payload for another
+        // collection, and a payload version this build cannot read. All reach `receive` after the
+        // source records and must not fail the page, whatever status each failure carries.
+        let member_ids = [
+            random::id().expect("operation id"),
+            random::id().expect("operation id"),
+            random::id().expect("operation id"),
+        ];
+        if member_share.is_some() {
+            let plaintexts = [
+                OperationPayload::new(
+                    collection,
+                    1,
+                    PayloadBody::PurgeObject {
+                        object_id: objects[0].0,
+                        object_generation: 1,
+                        authored_at_ms: 1,
+                    },
+                )
+                .expect("payload")
+                .encode(),
+                OperationPayload::new(
+                    id(99),
+                    1,
+                    PayloadBody::SetFavorite {
+                        object_id: objects[0].0,
+                        favorite: true,
+                        removed_tokens: vec![],
+                    },
+                )
+                .expect("payload")
+                .encode(),
+                vec![0xFF; 64],
+            ];
+            for (operation_id, payload) in member_ids.iter().zip(plaintexts) {
+                commits.push(
+                    CollectionOperation::seal(
+                        *operation_id,
+                        member_vault,
+                        *member_enrollment.device_id(),
+                        1,
+                        [0; 32],
+                        vec![],
+                        *domain.selector(),
+                        domain.operation_key(),
+                        Nonce::random().expect("nonce"),
+                        &payload,
+                    )
+                    .expect("member record")
+                    .sign(member_identity.signing_key()),
+                );
+            }
+        }
         let plan = sharing_receive::receive(
             &mut recipient,
             &recipient_root,
@@ -731,6 +875,74 @@ mod tests {
         )
         .expect("authenticated collection receive");
         assert_eq!(plan.objects.len(), 66);
+        assert_eq!(plan.pending_operations, 0);
+        assert_eq!(plan.rejected_operations, if check_scope { 0 } else { 4 });
+        for rejected in std::iter::once(rejected_id).chain(member_ids) {
+            let stored: i64 = recipient
+                .connection()
+                .query_row(
+                    "SELECT count(*) FROM sharing_operations WHERE operation_id = ?1",
+                    [rejected.as_bytes().as_slice()],
+                    |row| row.get(0),
+                )
+                .expect("rejected row count");
+            assert_eq!(stored, 0);
+        }
+        if member_share.is_some() {
+            // A record sealed for a key this device does not hold yet is not the issuer's fault,
+            // so it fails the page for the source and for a member alike.
+            let payload = OperationPayload::new(
+                collection,
+                1,
+                PayloadBody::SetFavorite {
+                    object_id: objects[0].0,
+                    favorite: true,
+                    removed_tokens: vec![],
+                },
+            )
+            .expect("payload")
+            .encode();
+            for (vault, device, signer) in [
+                (
+                    source_vault,
+                    *source_enrollment.device_id(),
+                    identity.signing_key(),
+                ),
+                (
+                    member_vault,
+                    *member_enrollment.device_id(),
+                    member_identity.signing_key(),
+                ),
+            ] {
+                let unkeyed = CollectionOperation::seal(
+                    random::id().expect("operation id"),
+                    vault,
+                    device,
+                    1,
+                    [0; 32],
+                    vec![],
+                    random::id().expect("selector"),
+                    domain.operation_key(),
+                    Nonce::random().expect("nonce"),
+                    &payload,
+                )
+                .expect("record for an unheld key")
+                .sign(signer);
+                let error = sharing_receive::receive(
+                    &mut recipient,
+                    &recipient_root,
+                    recipient_vault,
+                    &issuers,
+                    &changes,
+                    prepared.grant(),
+                    prepared.grant_operation(),
+                    std::slice::from_ref(&unkeyed),
+                )
+                .err()
+                .expect("an unheld key selector fails the page");
+                assert_eq!(error.status(), ChurStatus::AuthenticationFailed);
+            }
+        }
         let mut requests = std::collections::BTreeMap::new();
         for (index, (object, _)) in objects.iter().enumerate() {
             if foreign_first && index == 2 {

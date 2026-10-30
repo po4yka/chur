@@ -56,7 +56,7 @@ internal actual fun SpiritSurface(state: SpiritRenderState, modifier: Modifier) 
     Box(modifier) {
         if (data != null && !failed) {
             AndroidView(modifier = Modifier.fillMaxSize(),
-                factory = { SpiritTexture(it, data, { ready = true }) { failed = true } },
+                factory = { SpiritTexture(it, data, { shown -> ready = shown }) { failed = true } },
                 update = { it.submit(state) },
                 onRelease = { it.release() },
             )
@@ -76,7 +76,7 @@ internal actual fun SpiritSurface(state: SpiritRenderState, modifier: Modifier) 
 }
 
 /** One native surface/engine; it owns no app state, files beyond bundled art, or network access. */
-private class SpiritTexture(context: Context, private val data: ByteArray, private val ready: () -> Unit, private val failed: () -> Unit) :
+private class SpiritTexture(context: Context, private val data: ByteArray, private val ready: (Boolean) -> Unit, private val failed: () -> Unit) :
     TextureView(context), Choreographer.FrameCallback {
     private var engine: Engine? = null
     private var helper: UiHelper? = null
@@ -172,6 +172,8 @@ private class SpiritTexture(context: Context, private val data: ByteArray, priva
     }
 
     private fun createRenderer() {
+        // A reattached view builds a new engine; show the poster again until its first frame.
+        ready(false)
         Filament.init(); Gltfio.init()
         val e = Engine.create().also { engine = it }
         val r = e.createRenderer().also { renderer = it }
@@ -256,7 +258,7 @@ private class SpiritTexture(context: Context, private val data: ByteArray, priva
                 delegate?.onSurfaceTextureDestroyed(texture) ?: true
             override fun onSurfaceTextureUpdated(texture: android.graphics.SurfaceTexture) {
                 delegate?.onSurfaceTextureUpdated(texture)
-                if (!delivered && !released) { delivered = true; ready() }
+                if (!delivered && !released) { delivered = true; ready(true) }
             }
         }
     }

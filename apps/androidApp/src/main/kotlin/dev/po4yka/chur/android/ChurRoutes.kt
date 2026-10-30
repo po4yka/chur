@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.key
@@ -902,7 +903,7 @@ private fun VaultRoute(controller: ChurController) {
             if (uri != null) controller.exportPrivateNote(request, ExportTarget.FILES, uri.toString())
         } else if (uri != null) {
             // This launcher created the destination, even if its session ended before delivery.
-            scope.launch(Dispatchers.IO) { runCatching { context.contentResolver.delete(uri, null, null) } }
+            scope.launch(Dispatchers.IO) { runCatching { DocumentsContract.deleteDocument(context.contentResolver, uri) } }
         }
     }
     val privateNoteFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -1721,7 +1722,7 @@ private fun ViewerRoute(
             if (controller.vaultState.value is VaultState.Unlocked) {
                 controller.export(projection.objectId, ExportTarget.FILES, uri.toString())
             } else {
-                runCatching { context.contentResolver.delete(uri, null, null) }
+                viewerScope.launch(Dispatchers.IO) { runCatching { DocumentsContract.deleteDocument(context.contentResolver, uri) } }
             }
         }
     }

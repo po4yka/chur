@@ -1,9 +1,18 @@
 package dev.po4yka.chur.android
 
+import android.content.ContentResolver
 import android.content.ContentValues
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.ProviderInfo
+import android.database.Cursor
+import android.database.MatrixCursor
 import android.net.Uri
 import android.os.Bundle
+import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
+import android.provider.DocumentsContract
+import android.provider.DocumentsProvider
 import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -11,6 +20,7 @@ import dev.po4yka.chur.app.ExportTarget
 import dev.po4yka.chur.imports.AndroidProviderPipe
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -44,26 +54,11 @@ class MediaExportCleanupTest {
     }
 
     @Test
-    fun exhaustedOutputSlotsDiscardSelectedFilesArchivesAndNewMediaRows() {
+    fun exhaustedOutputSlotsDiscardNewMediaRows() {
         val sink = ExportDestinations(context, {}, {})
         val files = List(4) { File.createTempFile("provider-slot-", ".bin", context.cacheDir) }
         val outputs = files.map { AndroidProviderPipe.output(ParcelFileDescriptor.open(it, ParcelFileDescriptor.MODE_WRITE_ONLY)) }
         try {
-            for (archive in listOf(false, true)) {
-                val selected = requireNotNull(resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, "chur-selected-${System.nanoTime()}.bin")
-                    put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
-                    put(MediaStore.MediaColumns.IS_PENDING, 1)
-                }))
-                try {
-                    assertNotNull(pendingRow(selected))
-                    exhausted {
-                        if (archive) sink.createArchive("selected.bin", "application/octet-stream", ExportTarget.FILES, selected.toString(), 512)
-                        else sink.create("selected.bin", "application/octet-stream", ExportTarget.FILES, selected.toString(), 512)
-                    }
-                    awaitCleanup { pendingRow(selected) == null }
-                } finally { resolver.delete(selected, null, null) }
-            }
             val name = "chur-output-limit-${System.nanoTime()}.bin"
             exhausted { sink.create(name, "application/octet-stream", ExportTarget.DEFAULT, null, 512) }
             awaitCleanup {
@@ -78,6 +73,66 @@ class MediaExportCleanupTest {
             files.forEach { it.delete() }
             sink.cancelPending()
         }
+    }
+
+    @Test
+    fun exhaustedOutputSlotsDiscardPickedDocumentsThroughTheDocumentsProvider() {
+        val picked = PickedDocuments()
+        val sink = ExportDestinations(picked.context, {}, {})
+        val files = List(4) { File.createTempFile("provider-slot-", ".bin", context.cacheDir) }
+        val outputs = files.map { AndroidProviderPipe.output(ParcelFileDescriptor.open(it, ParcelFileDescriptor.MODE_WRITE_ONLY)) }
+        try {
+            exhausted { sink.create("selected.bin", "application/octet-stream", ExportTarget.FILES, picked.uri("single").toString(), 512) }
+            exhausted { sink.createArchive("selected.bin", "application/octet-stream", ExportTarget.FILES, picked.uri("archive").toString(), 512) }
+            awaitCleanup { picked.deleted.toList().sorted() == listOf("archive", "single") }
+        } finally {
+            outputs.forEach { it.close(); runCatching { it.finish() } }
+            files.forEach { it.delete() }
+            sink.cancelPending()
+        }
+    }
+
+    @Test
+    fun aDiscardedPickedDocumentIsDeletedThroughTheDocumentsProvider() {
+        val picked = PickedDocuments()
+        val sink = ExportDestinations(picked.context, {}, {})
+        try {
+            requireNotNull(sink.create("selected.bin", "application/octet-stream", ExportTarget.FILES, picked.uri("plain").toString(), 512)).discard()
+            assertEquals(listOf("plain"), picked.deleted.toList())
+        } finally { sink.cancelPending() }
+    }
+
+    /** A DocumentsProvider rejects ContentResolver.delete, so only DocumentsContract removes a picked document. */
+    private inner class PickedDocuments {
+        val authority = "dev.po4yka.chur.test.picked-${System.nanoTime()}"
+        val deleted = CopyOnWriteArrayList<String>()
+        private val resolver: ContentResolver
+        val context: Context
+
+        init {
+            val provider = object : DocumentsProvider() {
+                override fun onCreate() = true
+                override fun deleteDocument(documentId: String) { deleted.add(documentId) }
+                override fun openDocument(documentId: String, mode: String, signal: CancellationSignal?): ParcelFileDescriptor =
+                    ParcelFileDescriptor.open(File.createTempFile("picked-", ".bin", this@MediaExportCleanupTest.context.cacheDir).apply { deleteOnExit() }, ParcelFileDescriptor.MODE_READ_WRITE)
+                override fun queryRoots(projection: Array<out String>?): Cursor = MatrixCursor(arrayOf())
+                override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor = MatrixCursor(arrayOf())
+                override fun queryChildDocuments(parentDocumentId: String, projection: Array<out String>?, sortOrder: String?): Cursor = MatrixCursor(arrayOf())
+            }
+            provider.attachInfo(this@MediaExportCleanupTest.context, ProviderInfo().apply {
+                authority = this@PickedDocuments.authority
+                exported = true
+                grantUriPermissions = true
+                readPermission = android.Manifest.permission.MANAGE_DOCUMENTS
+                writePermission = android.Manifest.permission.MANAGE_DOCUMENTS
+            })
+            resolver = ContentResolver.wrap(provider)
+            context = object : ContextWrapper(this@MediaExportCleanupTest.context) {
+                override fun getContentResolver() = resolver
+            }
+        }
+
+        fun uri(id: String): Uri = DocumentsContract.buildDocumentUri(authority, id)
     }
 
     private fun exhausted(action: () -> Unit) {

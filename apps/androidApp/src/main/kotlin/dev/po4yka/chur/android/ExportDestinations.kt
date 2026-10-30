@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
@@ -22,6 +23,7 @@ import dev.po4yka.chur.core.model.ChurStatus
 import dev.po4yka.chur.ffi.ChurFailure
 import dev.po4yka.chur.imports.AndroidProviderPipe
 import java.io.File
+import java.io.FileNotFoundException
 import java.util.UUID
 
 /** Streams verified originals to a chosen system destination. */
@@ -178,6 +180,7 @@ class ExportDestinations(
     private inner class ProviderDestination(
         val transfer: AndroidProviderPipe.Output,
         private val uri: Uri,
+        private val document: Boolean,
         private val publishAction: () -> Unit,
         private val discardAction: () -> Unit,
     ) : ExportSink.Destination {
@@ -188,7 +191,7 @@ class ExportDestinations(
         }
         override fun discard() { close(); discardAction() }
         fun discardAfterSetupFailure() {
-            try { close() } finally { AndroidProviderOpen.discard(resolver, uri) }
+            try { close() } finally { AndroidProviderOpen.discard(resolver, uri, document) }
         }
         override fun close() {
             transfer.close()
@@ -276,7 +279,15 @@ class ExportDestinations(
     ): ExportSink.Destination? = when (target) {
         ExportTarget.FILES -> {
             val document = uri?.let(Uri::parse) ?: return null
-            open(document, publish = {}, discard = { resolver.delete(document, null, null) })
+            // A picked document belongs to a DocumentsProvider, which rejects ContentResolver.delete.
+            open(document, publish = {}, discard = {
+                // A document that is already gone must not mask the failure that led here.
+                try {
+                    if (!DocumentsContract.deleteDocument(resolver, document)) {
+                        throw ChurFailure(ChurStatus.IO_FAILURE, "the partial export could not be removed")
+                    }
+                } catch (_: FileNotFoundException) { }
+            }, document = true)
         }
         ExportTarget.SHARE -> {
             expireShares()
@@ -364,24 +375,24 @@ class ExportDestinations(
         }
     }
 
-    private fun open(uri: Uri, publish: () -> Unit, discard: () -> Unit): ExportSink.Destination? {
+    private fun open(uri: Uri, publish: () -> Unit, discard: () -> Unit, document: Boolean = false): ExportSink.Destination? {
         val openedGeneration = synchronized(directoryExports) { generation }
         var openerEntered = false
         val transfer = try {
             AndroidProviderPipe.output {
                 openerEntered = true
-                AndroidProviderOpen.open(resolver, uri, "w") {
+                AndroidProviderOpen.open(resolver, uri, "w", document) {
                     openedGeneration != synchronized(directoryExports) { generation }
                 } ?: throw ChurFailure(ChurStatus.IO_FAILURE, "the export file could not be opened")
             }
         } catch (failure: Exception) {
             // Once entered, the opener owns late-FD cleanup. Before entry, only
             // this path can discard the selected URI or the new MediaStore row.
-            if (!openerEntered) AndroidProviderOpen.discard(resolver, uri)
+            if (!openerEntered) AndroidProviderOpen.discard(resolver, uri, document)
             throw failure
         }
         synchronized(providerOutputs) { providerOutputs.add(transfer) }
-        return ProviderDestination(transfer, uri, publish, discard)
+        return ProviderDestination(transfer, uri, document, publish, discard)
     }
 }
 

@@ -218,6 +218,14 @@ iOS adds nothing: `AVFoundation` is part of the platform, and the resource-loade
 - **Telemetry:** none. The library writes only `Log` lines about provider lookup, which carry no vault data.
 - **Removal plan:** the seam is `SystemSecurity.kt` in the Android host and one optional field of `VaultUiState`. Removing the library removes that file and hides the row.
 
+### `proptest` 1.12, Rust tests only
+
+- **Capability:** property tests in `chur-format/tests/properties.rs`. They check round trips over arbitrary values and the `CANONICAL_ENCODING_V1.md` §8 rule that an accepted input, also one with a changed byte, re-encodes to the same bytes. The unit tests pin boundary values, and the fuzz targets check only that a parser does not panic.
+- **Alternatives:** a hand-written random loop has no shrinking and no failure persistence. `arbitrary` is already in the fuzz graph, but it has no strategies and no shrinking outside libFuzzer.
+- **Owner and license:** the `proptest-rs` organization maintains it under MIT OR Apache-2.0.
+- **Footprint:** a dev-dependency only, so it never enters a library, an FFI artifact, or an app. Default features are off and only `std` is on: no process fork, timeout thread, or temp-file graph. It adds `rand`, `rand_xorshift`, `regex-syntax`, `unarray`, and `core_detect` to the test graph. No `unsafe` code of ours, no build script, no network access.
+- **Update and removal:** Dependabot updates it with the cargo group. Removal deletes the test file and the dev-dependency.
+
 ## Cargo features
 
 Disable default features unless they are understood. Features that add platform key access, network clients, file-system traversal, dynamic loading, serialization formats, or native libraries require review.

@@ -23,7 +23,8 @@ use chur_format::catalog_export::{
     ChunkSource, ExportHeader, ExportReader, ExportWriter, TableHeader, Value,
 };
 use chur_format::constants::{
-    CATALOG_FORMAT_VERSION_V15, CATALOG_FORMAT_VERSION_V16, CATALOG_FORMAT_VERSION_V17, ObjectState,
+    CATALOG_FORMAT_VERSION_V15, CATALOG_FORMAT_VERSION_V16, CATALOG_FORMAT_VERSION_V17,
+    CATALOG_FORMAT_VERSION_V18, ObjectState,
 };
 use rusqlite::Connection;
 use rusqlite::types::{ToSqlOutput, ValueRef};
@@ -253,8 +254,11 @@ pub fn import(
         "the catalog export names another schema version than its package"
     );
     match header.catalog_format_version {
-        CATALOG_FORMAT_VERSION_V15 | CATALOG_FORMAT_VERSION_V16 | CATALOG_FORMAT_VERSION_V17 => {}
-        version if version > CATALOG_FORMAT_VERSION_V17 => bail!(
+        CATALOG_FORMAT_VERSION_V15
+        | CATALOG_FORMAT_VERSION_V16
+        | CATALOG_FORMAT_VERSION_V17
+        | CATALOG_FORMAT_VERSION_V18 => {}
+        version if version > CATALOG_FORMAT_VERSION_V18 => bail!(
             UnsupportedVersion,
             "the catalog export belongs to a newer catalog schema"
         ),
@@ -474,11 +478,11 @@ mod tests {
         let header = import(
             &mut copy,
             Chunks(vec![bytes.clone()].into_iter()),
-            CATALOG_FORMAT_VERSION_V17,
+            CATALOG_FORMAT_VERSION_V18,
             &|| false,
         )
         .expect("import");
-        assert_eq!(header.catalog_format_version, CATALOG_FORMAT_VERSION_V17);
+        assert_eq!(header.catalog_format_version, CATALOG_FORMAT_VERSION_V18);
         assert_eq!(stream_of(&copy), bytes);
         let found: i64 = copy
             .connection()
@@ -499,7 +503,7 @@ mod tests {
             import(
                 &mut populated,
                 Chunks(vec![bytes.clone()].into_iter()),
-                CATALOG_FORMAT_VERSION_V17,
+                CATALOG_FORMAT_VERSION_V18,
                 &|| false
             )
             .unwrap_err()
@@ -510,7 +514,7 @@ mod tests {
         // A newer schema version is unsupported; an older one cannot exist.
         for (version, status) in [
             (
-                CATALOG_FORMAT_VERSION_V17 + 1,
+                CATALOG_FORMAT_VERSION_V18 + 1,
                 ChurStatus::UnsupportedVersion,
             ),
             (CATALOG_FORMAT_VERSION_V15 - 1, ChurStatus::VaultCorrupt),
@@ -537,7 +541,7 @@ mod tests {
             import(
                 &mut empty_catalog(),
                 Chunks(vec![renamed].into_iter()),
-                CATALOG_FORMAT_VERSION_V17,
+                CATALOG_FORMAT_VERSION_V18,
                 &|| false
             )
             .unwrap_err()
@@ -552,7 +556,7 @@ mod tests {
             import(
                 &mut empty_catalog(),
                 Chunks(vec![generation].into_iter()),
-                CATALOG_FORMAT_VERSION_V17,
+                CATALOG_FORMAT_VERSION_V18,
                 &|| false
             )
             .unwrap_err()
@@ -567,6 +571,7 @@ mod tests {
             CATALOG_FORMAT_VERSION_V15,
             CATALOG_FORMAT_VERSION_V16,
             CATALOG_FORMAT_VERSION_V17,
+            CATALOG_FORMAT_VERSION_V18,
         ] {
             let mut original = empty_catalog();
             schema::install_export_version(&mut original, version, 7)
@@ -602,7 +607,7 @@ mod tests {
                 [], |row| row.get(0)).unwrap();
             assert_eq!(
                 playback_tables,
-                i64::from(version == CATALOG_FORMAT_VERSION_V17)
+                i64::from(version >= CATALOG_FORMAT_VERSION_V17)
             );
             if version == CATALOG_FORMAT_VERSION_V15 {
                 schema::migrate_v15_to_v16(&mut copy).expect("v15 to v16");
@@ -610,9 +615,12 @@ mod tests {
             if version < CATALOG_FORMAT_VERSION_V17 {
                 schema::migrate_v16_to_v17(&mut copy).expect("v16 to v17");
             }
+            if version < CATALOG_FORMAT_VERSION_V18 {
+                schema::migrate_v17_to_v18(&mut copy).expect("v17 to v18");
+            }
             assert_eq!(
                 schema::recorded_version(copy.connection()).unwrap(),
-                Some(CATALOG_FORMAT_VERSION_V17)
+                Some(CATALOG_FORMAT_VERSION_V18)
             );
             let found: i64 = copy.connection().query_row(
                 "SELECT count(*) FROM private_note_search WHERE private_note_search MATCH 'searchable'",
@@ -631,7 +639,11 @@ mod tests {
     #[test]
     fn a_current_export_cannot_claim_an_older_table_set() {
         let bytes = stream_of(&source());
-        for version in [CATALOG_FORMAT_VERSION_V15, CATALOG_FORMAT_VERSION_V16] {
+        for version in [
+            CATALOG_FORMAT_VERSION_V15,
+            CATALOG_FORMAT_VERSION_V16,
+            CATALOG_FORMAT_VERSION_V17,
+        ] {
             let mut changed = bytes.clone();
             changed[2..4].copy_from_slice(&version.to_be_bytes());
             assert_eq!(

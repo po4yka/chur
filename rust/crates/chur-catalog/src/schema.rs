@@ -18,7 +18,7 @@ use chur_format::{
         CATALOG_FORMAT_VERSION_V7, CATALOG_FORMAT_VERSION_V8, CATALOG_FORMAT_VERSION_V9,
         CATALOG_FORMAT_VERSION_V10, CATALOG_FORMAT_VERSION_V11, CATALOG_FORMAT_VERSION_V12,
         CATALOG_FORMAT_VERSION_V13, CATALOG_FORMAT_VERSION_V14, CATALOG_FORMAT_VERSION_V15,
-        CATALOG_FORMAT_VERSION_V16, CATALOG_FORMAT_VERSION_V17,
+        CATALOG_FORMAT_VERSION_V16, CATALOG_FORMAT_VERSION_V17, CATALOG_FORMAT_VERSION_V18,
     },
     envelope::ObjectKeyEnvelope,
 };
@@ -85,6 +85,9 @@ const STEPS: &[Step] = &[
     },
     Step {
         version: CATALOG_FORMAT_VERSION_V17,
+    },
+    Step {
+        version: CATALOG_FORMAT_VERSION_V18,
     },
 ];
 
@@ -938,6 +941,32 @@ pub fn migrate_v16_to_v17(db: &mut CatalogDb) -> Result<()> {
     })
 }
 
+const V18_DDL: &str = r#"
+-- CATALOG_SCHEMA_V18.md: the trusted-time high-water mark. No row until the
+-- first retention sweep initializes it from the device clock.
+CREATE TABLE trusted_time (
+    only_row    INTEGER PRIMARY KEY CHECK (only_row = 1),
+    trusted_ms  INTEGER NOT NULL CHECK (trusted_ms >= 0)
+) STRICT;
+"#;
+
+/// Adds the persisted trusted-time mark after descriptor authentication.
+pub fn migrate_v17_to_v18(db: &mut CatalogDb) -> Result<()> {
+    ensure!(
+        recorded_version(db.connection())? == Some(CATALOG_FORMAT_VERSION_V17),
+        MigrationRequired,
+        "the catalog is not version seventeen"
+    );
+    db.transaction(|tx| {
+        tx.execute("UPDATE vault_state SET active_migration_target = 18 WHERE only_row = 1", [])
+            .map_err(|error| map_sqlite(error, "the trusted-time migration target could not be written"))?;
+        tx.execute_batch(V18_DDL).map_err(|error| map_sqlite(error, "the trusted-time schema could not be created"))?;
+        tx.execute("UPDATE vault_state SET catalog_format_version = 18, active_migration_target = NULL WHERE only_row = 1", [])
+            .map_err(|error| map_sqlite(error, "the trusted-time schema version could not be written"))?;
+        Ok(())
+    })
+}
+
 /// Creates the current schema or opens it without performing an implicit migration.
 ///
 /// `docs/format/CATALOG_SCHEMA_V1.md` §18 forbids skipping an untested step, so
@@ -947,15 +976,15 @@ pub fn open_at_current_version(db: &mut CatalogDb, now_ms: u64) -> Result<u16> {
     let present = recorded_version(db.connection())?;
     let Some(present) = present else {
         install(db, now_ms)?;
-        return Ok(CATALOG_FORMAT_VERSION_V17);
+        return Ok(CATALOG_FORMAT_VERSION_V18);
     };
-    if present != CATALOG_FORMAT_VERSION_V17 {
+    if present != CATALOG_FORMAT_VERSION_V18 {
         bail!(
             MigrationRequired,
             "the catalog requires an authenticated schema migration"
         );
     }
-    Ok(CATALOG_FORMAT_VERSION_V17)
+    Ok(CATALOG_FORMAT_VERSION_V18)
 }
 
 /// The version the database records, or `None` when the schema is absent.
@@ -984,7 +1013,7 @@ pub(crate) fn recorded_version(connection: &Connection) -> Result<Option<u16>> {
 
 /// Installs the current schema and its single `vault_state` row.
 fn install(db: &mut CatalogDb, now_ms: u64) -> Result<()> {
-    install_export_version(db, CATALOG_FORMAT_VERSION_V17, now_ms)
+    install_export_version(db, CATALOG_FORMAT_VERSION_V18, now_ms)
 }
 
 /// Installs the exact known schema declared by a portable catalog export.
@@ -993,7 +1022,10 @@ pub(crate) fn install_export_version(db: &mut CatalogDb, version: u16, now_ms: u
     ensure!(
         matches!(
             version,
-            CATALOG_FORMAT_VERSION_V15 | CATALOG_FORMAT_VERSION_V16 | CATALOG_FORMAT_VERSION_V17
+            CATALOG_FORMAT_VERSION_V15
+                | CATALOG_FORMAT_VERSION_V16
+                | CATALOG_FORMAT_VERSION_V17
+                | CATALOG_FORMAT_VERSION_V18
         ),
         UnsupportedVersion,
         "the portable catalog schema is unsupported"
@@ -1045,9 +1077,14 @@ pub(crate) fn install_export_version(db: &mut CatalogDb, version: u16, now_ms: u
         transaction
             .execute_batch(V14_DDL)
             .map_err(|e| map_sqlite(e, "the note workspace schema could not be created"))?;
-        if version == CATALOG_FORMAT_VERSION_V17 {
+        if version >= CATALOG_FORMAT_VERSION_V17 {
             transaction.execute_batch(V17_DDL).map_err(|error| {
                 map_sqlite(error, "the playback position schema could not be created")
+            })?;
+        }
+        if version >= CATALOG_FORMAT_VERSION_V18 {
+            transaction.execute_batch(V18_DDL).map_err(|error| {
+                map_sqlite(error, "the trusted-time schema could not be created")
             })?;
         }
         transaction
@@ -1082,6 +1119,7 @@ pub fn migrate_v8_to_v9(db: &mut CatalogDb) -> Result<()> {
 
 #[cfg(test)]
 const RESET_V7_DDL: &str = "
+DROP TABLE IF EXISTS trusted_time;
 DROP TABLE IF EXISTS playback_positions;
 DROP TABLE IF EXISTS own_sync_pending_album_memberships;
 DROP TABLE IF EXISTS content_index;
@@ -1798,7 +1836,7 @@ mod tests {
     fn playback_position_migration_rolls_back_ddl_and_version_together() {
         let mut db = open();
         open_at_current_version(&mut db, 1).expect("install");
-        db.connection().execute_batch("DROP TABLE playback_positions;
+        db.connection().execute_batch("DROP TABLE trusted_time; DROP TABLE playback_positions;
             UPDATE vault_state SET catalog_format_version = 16;
             CREATE TRIGGER fail_playback_migration BEFORE UPDATE OF catalog_format_version ON vault_state
             WHEN NEW.catalog_format_version = 17 BEGIN SELECT RAISE(ABORT, 'interrupted'); END;").expect("v16 fixture");
@@ -1834,11 +1872,57 @@ mod tests {
     }
 
     #[test]
-    fn a_new_catalog_installs_version_seventeen() {
+    fn trusted_time_migration_rolls_back_ddl_and_version_together() {
+        let mut db = open();
+        open_at_current_version(&mut db, 1).expect("install");
+        db.connection().execute_batch("DROP TABLE trusted_time;
+            UPDATE vault_state SET catalog_format_version = 17;
+            CREATE TRIGGER fail_trusted_time_migration BEFORE UPDATE OF catalog_format_version ON vault_state
+            WHEN NEW.catalog_format_version = 18 BEGIN SELECT RAISE(ABORT, 'interrupted'); END;").expect("v17 fixture");
+        assert!(migrate_v17_to_v18(&mut db).is_err());
+        assert_eq!(
+            recorded_version(db.connection()).expect("version"),
+            Some(CATALOG_FORMAT_VERSION_V17)
+        );
+        let tables = |db: &CatalogDb| -> i64 {
+            db.connection()
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE name='trusted_time'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("table count")
+        };
+        assert_eq!(tables(&db), 0);
+        db.connection()
+            .execute_batch("DROP TRIGGER fail_trusted_time_migration")
+            .expect("retry");
+        migrate_v17_to_v18(&mut db).expect("migrate");
+        assert_eq!(
+            recorded_version(db.connection()).expect("version"),
+            Some(CATALOG_FORMAT_VERSION_V18)
+        );
+        assert_eq!(tables(&db), 1);
+        let rows: i64 = db
+            .connection()
+            .query_row("SELECT count(*) FROM trusted_time", [], |row| row.get(0))
+            .expect("rows");
+        assert_eq!(rows, 0);
+        assert_eq!(generation(&db).expect("generation"), 1);
+        assert_eq!(
+            migrate_v17_to_v18(&mut db)
+                .expect_err("wrong source version")
+                .status(),
+            chur_core::ChurStatus::MigrationRequired
+        );
+    }
+
+    #[test]
+    fn a_new_catalog_installs_version_eighteen() {
         let mut db = open();
         assert_eq!(
             open_at_current_version(&mut db, 1_700_000_000_000).expect("install"),
-            CATALOG_FORMAT_VERSION_V17
+            CATALOG_FORMAT_VERSION_V18
         );
         let sharing_tables: i64 = db
             .connection()
@@ -1910,7 +1994,7 @@ mod tests {
         }
         assert_eq!(
             STEPS.last().map(|step| step.version),
-            Some(CATALOG_FORMAT_VERSION_V17)
+            Some(CATALOG_FORMAT_VERSION_V18)
         );
     }
 

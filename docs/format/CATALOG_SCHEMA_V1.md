@@ -165,7 +165,7 @@ In v1 the queryable columns of `metadata_revisions` are the only copy of the rev
 Two times are stored per object and neither is trusted:
 
 - **capture time** comes from the source's provider metadata, normalized into the canonical model of [`../interop/MEDIA_PIPELINE.md`](../interop/MEDIA_PIPELINE.md) §4 from hints that §3 of the same document says Rust must not trust. It is parsed, range-checked, and stored as the `u64` milliseconds of [`CANONICAL_ENCODING_V1.md`](CANONICAL_ENCODING_V1.md) §9. It is never corrected against the device clock, because a correction would silently rewrite the only record of when a photograph was taken;
-- **import time** is read from the device clock when the catalog transaction of §17 commits. A wrong device clock produces a wrong import time and Chur does not detect it. Nothing cryptographic depends on either value, and neither is ordering proof.
+- **import time** is read from the device clock when the catalog transaction of §17 commits. A wrong device clock produces a wrong import time and Chur does not detect it. Nothing cryptographic depends on either value, and neither is ordering proof. Retention is not judged against the device clock: trash and private-note expiry use the trusted-time mark of [catalog v18](CATALOG_SCHEMA_V18.md).
 
 When capture time is absent or fails its range check, it is set equal to import time and `capture_time_substituted` is set on the row, so the timeline still orders the object and the interface can decline to present a capture date it does not have.
 

@@ -136,6 +136,8 @@ pub struct CatalogDb {
     connection: Connection,
     pub(crate) sharing_log_cache: Option<crate::sharing_log::CachedCollectionLog>,
     pub(crate) own_source_cache: Option<crate::own_sync::SourceCache>,
+    /// The process monotonic instant that the stored trusted-time mark reached; see `trusted_time`.
+    pub(crate) trusted_anchor: Option<std::time::Instant>,
     #[cfg(test)]
     pub(crate) own_source_replays: usize,
 }
@@ -164,6 +166,7 @@ impl CatalogDb {
             connection,
             sharing_log_cache: None,
             own_source_cache: None,
+            trusted_anchor: None,
             #[cfg(test)]
             own_source_replays: 0,
         };

@@ -1016,7 +1016,7 @@ fn restore_inner(
             "the package's catalog is not the one its manifest describes"
         );
         if vault::prepare_restored_catalog(&mut catalog, &local)? {
-            let target = chur_format::constants::CATALOG_FORMAT_VERSION_V17;
+            let target = chur_format::constants::CATALOG_FORMAT_VERSION_V18;
             let migration_steps = target - local.catalog.catalog_format_version;
             local.descriptor_generation = local
                 .descriptor_generation

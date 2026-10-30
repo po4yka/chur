@@ -95,6 +95,13 @@ fn encode(out: &mut Vec<u8>, n: &notes::Note, text: &str, size: u64) {
     string(out, &n.title);
     string(out, text);
 }
+
+/// Purges the notes whose retention the trusted time has ended, not the device clock.
+fn purge_expired(db: &mut chur_catalog::CatalogDb) -> Result<()> {
+    let trusted = chur_catalog::trusted_time::now(db, api::now_ms())?;
+    notes::purge_expired(db, trusted)
+}
+
 fn with_catalog<T>(
     session: Handle,
     body: impl FnOnce(&mut chur_catalog::CatalogDb) -> Result<T>,
@@ -153,7 +160,7 @@ unsafe fn control(
         };
         let mut record = Zeroizing::new(Vec::with_capacity(CAPACITY));
         with_catalog(session, |db| {
-            notes::purge_expired(db, api::now_ms())?;
+            purge_expired(db)?;
             body(db, &mut reader, &mut record)
         })?;
         reader.end()?;
@@ -354,7 +361,13 @@ pub unsafe extern "C" fn chur_private_note_change(
                     InvalidInput,
                     "the request has trailing bytes"
                 );
-                if let Some(n) = notes::change(db, &id, expected, action, api::now_ms())? {
+                // Trash and restore are retention decisions, so they use the trusted time.
+                let now = if matches!(action, 3 | 4) {
+                    chur_catalog::trusted_time::now(db, api::now_ms())?
+                } else {
+                    api::now_ms()
+                };
+                if let Some(n) = notes::change(db, &id, expected, action, now)? {
                     encode(
                         out,
                         &n,
@@ -421,7 +434,7 @@ pub unsafe extern "C" fn chur_private_note_attachments(
         let mut out = Zeroizing::new(Vec::with_capacity(capacity));
         with_catalog(session, |db| {
             use chur_catalog::note_attachments as files;
-            notes::purge_expired(db, api::now_ms())?;
+            purge_expired(db)?;
             match command {
                 1 => {
                     let id = Id::from_slice(r.take(16)?)?;
@@ -694,7 +707,7 @@ unsafe fn begin_export(
         // Validate the descriptor before retaining a plaintext snapshot.
         let destination = unsafe { api::duplicate_descriptor(fd)? };
         let bytes = with_catalog(session, |db| {
-            notes::purge_expired(db, api::now_ms())?;
+            purge_expired(db)?;
             let n = notes::get(db, &id)?;
             ensure!(n.revision == expected, Conflict, "the private note changed");
             match attachment_id {

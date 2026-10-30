@@ -78,6 +78,8 @@ pub const CATALOG_FORMAT_VERSION_V15: u16 = 0x000f;
 pub const CATALOG_FORMAT_VERSION_V16: u16 = 0x0010;
 /// Encrypted local playback positions and video storyboard capability.
 pub const CATALOG_FORMAT_VERSION_V17: u16 = 0x0011;
+/// Persisted trusted-time high-water mark for trash and note retention.
+pub const CATALOG_FORMAT_VERSION_V18: u16 = 0x0012;
 /// §15.2: `object_store_format_version`.
 pub const OBJECT_STORE_FORMAT_VERSION_V1: u16 = 0x0001;
 /// §15.2: `slot_version` of the v1 key-slot families.

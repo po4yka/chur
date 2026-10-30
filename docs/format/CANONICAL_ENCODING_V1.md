@@ -300,6 +300,7 @@ Each format version field has its own namespace:
 | `catalog_format_version` | `0x000f` | peer-only pairing without network credentials | [`CATALOG_SCHEMA_V15.md`](CATALOG_SCHEMA_V15.md) |
 | `catalog_format_version` | `0x0010` | encrypted compatible-video derivative capability | [`CATALOG_SCHEMA_V16.md`](CATALOG_SCHEMA_V16.md) |
 | `catalog_format_version` | `0x0011` | encrypted local video resume positions and storyboard capability | [`CATALOG_SCHEMA_V17.md`](CATALOG_SCHEMA_V17.md) |
+| `catalog_format_version` | `0x0012` | trusted-time mark for trash and note retention | [`CATALOG_SCHEMA_V18.md`](CATALOG_SCHEMA_V18.md) |
 | `object_store_format_version` | `0x0001` | object store layout v1 | [`VAULT_DESCRIPTOR_V1.md`](VAULT_DESCRIPTOR_V1.md) §6 |
 | `slot_version` | `0x0001` | v1 key-slot families | [`../security/KEY_SLOTS.md`](../security/KEY_SLOTS.md) §1 |
 

@@ -50,6 +50,7 @@ pub mod sync_rotation;
 pub mod sync_staging;
 pub mod transfer;
 pub mod trash;
+pub mod trusted_time;
 pub mod vault;
 
 pub use db::{CatalogDb, CatalogKey, CatalogLocation};

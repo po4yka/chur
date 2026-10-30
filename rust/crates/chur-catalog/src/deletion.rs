@@ -684,6 +684,38 @@ mod tests {
     }
 
     #[test]
+    fn a_forward_clock_jump_cannot_expire_a_fresh_trash_entry() {
+        use crate::trusted_time;
+        use std::time::{Duration, Instant};
+        let mut vault = vault();
+        let (id, _) = import(&mut vault);
+        let base = Instant::now();
+        let start = 1_700_000_000_000;
+        let month = 30 * 24 * 60 * 60 * 1000;
+        let trusted = trusted_time::advance(&mut vault.db, start, base).expect("start");
+        trash::set(&mut vault.db, &[id], false, trusted).expect("trash");
+        // The device clock jumps a month ahead; the process measured five seconds.
+        let jumped =
+            trusted_time::advance(&mut vault.db, start + month, base + Duration::from_secs(5))
+                .expect("jump");
+        assert!(
+            trash::pending(&vault.db, Some(jumped))
+                .expect("pending")
+                .is_empty()
+        );
+        // Real time passes: the entry stays through day 29 and expires on day 30.
+        for day in 1..=30u64 {
+            let at = base + Duration::from_secs(5 + day * 24 * 60 * 60);
+            let now = trusted_time::advance(&mut vault.db, start + month, at).expect("sweep");
+            assert_eq!(
+                trash::pending(&vault.db, Some(now)).expect("pending").len(),
+                usize::from(day == 30),
+                "day {day}"
+            );
+        }
+    }
+
+    #[test]
     fn trash_hides_then_restores_an_object_without_losing_its_key() {
         let mut vault = vault();
         let (id, _) = import(&mut vault);

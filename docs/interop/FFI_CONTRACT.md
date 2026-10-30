@@ -634,7 +634,7 @@ When the caller's tag-list buffer is too small, `chur_tag_list` reports the requ
 
 ### 6.22 Recoverable trash, ABI 2.18
 
-`chur_trash_set` accepts a nonempty packed selection of 16-byte object identifiers and a strict boolean `restore`. The transaction moves all active objects to trash with a 30-day deadline, or restores all selected trashed objects. Invalid identifiers refuse the whole selection. Trash retains encrypted containers, key envelopes, metadata, tags, album memberships, and favourite flags. Scope 7 of `chur_catalog_query` lists trash newest first by deletion time; ordinary scopes and search hide it.
+`chur_trash_set` accepts a nonempty packed selection of 16-byte object identifiers and a strict boolean `restore`. The transaction moves all active objects to trash with a 30-day deadline on the trusted time of [catalog v18](../format/CATALOG_SCHEMA_V18.md), or restores all selected trashed objects. Invalid identifiers refuse the whole selection. Trash retains encrypted containers, key envelopes, metadata, tags, album memberships, and favourite flags. Scope 7 of `chur_catalog_query` lists trash newest first by deletion time; ordinary scopes and search hide it.
 
 `chur_trash_restore_all` restores every unexpired entry in one transaction. `chur_object_delete` is the irreversible cryptographic erasure path. `chur_trash_empty` invokes it for every trash entry. Expired entries are purged on unlock and before catalog queries. An interrupted purge rolls forward at the next unlock. Final deletion may progress through several objects before an error; successful objects stay deleted and remaining entries stay in trash.
 

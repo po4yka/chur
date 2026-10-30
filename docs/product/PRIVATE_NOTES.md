@@ -34,7 +34,7 @@ Copy and Cut are disabled through modern and legacy clipboard write guards, cont
 
 ## Trash and deletion
 
-Move to Trash and Restore use the saved revision and commit atomically. Trashed notes are read-only and can be restored or explicitly exported. Delete permanently requires confirmation and removes the live note and search rows. Trash expires after 30 days; native note access clears expired entries before returning results.
+Move to Trash and Restore use the saved revision and commit atomically. Trashed notes are read-only and can be restored or explicitly exported. Delete permanently requires confirmation and removes the live note and search rows. Trash expires after 30 days on the trusted time of [catalog v18](../format/CATALOG_SCHEMA_V18.md), so a device clock that jumps ahead does not expire it at once; native note access clears expired entries before returning results.
 
 The catalog and FTS use secure-delete settings to reduce deleted-cell retention. This is not per-note cryptographic erasure or physical overwrite. Older encrypted backups can still contain earlier notes.
 

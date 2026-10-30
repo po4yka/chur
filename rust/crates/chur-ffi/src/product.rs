@@ -725,9 +725,8 @@ pub unsafe extern "C" fn chur_trash_set(
             return Err(wrong_type());
         };
         let mut guard = registry::lock(guarded);
-        let now = crate::api::now_ms();
-        sweep_expired_trash(&mut guard, now)?;
-        trash::set(guard.catalog()?, &ids, restore, now)
+        let trusted = sweep_expired_trash(&mut guard, crate::api::now_ms())?;
+        trash::set(guard.catalog()?, &ids, restore, trusted)
     })
 }
 
@@ -793,13 +792,12 @@ pub extern "C" fn chur_trash_restore_all(session: Handle) -> Status {
             return Err(wrong_type());
         };
         let mut guard = registry::lock(guarded);
-        let now = crate::api::now_ms();
-        sweep_expired_trash(&mut guard, now)?;
+        let trusted = sweep_expired_trash(&mut guard, crate::api::now_ms())?;
         let ids = trash::pending(guard.catalog_ref()?, None)?;
         if ids.is_empty() {
             return Ok(());
         }
-        trash::set(guard.catalog()?, &ids, true, now)
+        trash::set(guard.catalog()?, &ids, true, trusted)
     })
 }
 
@@ -1671,11 +1669,17 @@ pub(crate) fn run_deletion(session: &mut Session, object_id: &Id, now_ms: u64) -
     finish_pending_deletions(session, now_ms)
 }
 
-/// Rolls forward interrupted permanent deletions, then purges expired trash.
-pub(crate) fn sweep_expired_trash(session: &mut Session, now_ms: u64) -> Result<()> {
+/// Rolls forward interrupted permanent deletions, then purges trash and notes that
+/// the trusted time has expired, and returns that time.
+///
+/// Expiry is judged against `chur_catalog::trusted_time`, not the device clock, so
+/// a forward clock jump cannot erase anything at once. `now_ms` is the device
+/// clock; it timestamps the erasure and feeds the trusted time.
+pub(crate) fn sweep_expired_trash(session: &mut Session, now_ms: u64) -> Result<u64> {
+    let trusted = chur_catalog::trusted_time::now(session.catalog()?, now_ms)?;
     finish_pending_deletions(session, now_ms)?;
-    chur_catalog::notes::purge_expired(session.catalog()?, now_ms)?;
-    let ids = trash::pending(session.catalog_ref()?, Some(now_ms))?;
+    chur_catalog::notes::purge_expired(session.catalog()?, trusted)?;
+    let ids = trash::pending(session.catalog_ref()?, Some(trusted))?;
     for id in ids {
         run_deletion(session, &id, now_ms)?;
     }
@@ -1687,7 +1691,7 @@ pub(crate) fn sweep_expired_trash(session: &mut Session, now_ms: u64) -> Result<
     if let Ok(catalog) = session.catalog() {
         let _ = catalog.checkpoint();
     }
-    Ok(())
+    Ok(trusted)
 }
 
 pub(crate) fn finish_pending_deletions(session: &mut Session, now_ms: u64) -> Result<()> {
@@ -1854,4 +1858,96 @@ pub unsafe extern "C" fn chur_backup_restore(
         // SAFETY: the caller guarantees `out_operation` is writable.
         unsafe { crate::api::write_out(out_operation, handle) }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+
+    use super::*;
+    use chur_catalog::{notes, paths::VaultRoot};
+    use chur_crypto::random;
+    use chur_format::constants::MediaClass;
+
+    const PASSWORD: &[u8] = b"trusted time sweep password";
+    const NOW: u64 = 1_700_000_000_000;
+    const MONTH: u64 = chur_catalog::trash::RETENTION_MS;
+
+    struct Directory(std::path::PathBuf);
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A device clock that jumps a month ahead erases neither fresh trash nor a fresh trashed note.
+    #[test]
+    fn a_forward_clock_jump_erases_nothing_trashed_just_before_it() {
+        let directory = Directory(std::env::temp_dir().join(format!(
+            "chur-trusted-time-{}",
+            random::id().unwrap().to_hex()
+        )));
+        let mut session = vault::create(&VaultRoot::new(&directory.0), PASSWORD, NOW)
+            .unwrap()
+            .activate()
+            .unwrap();
+        let bytes = Zeroizing::new(vec![7u8; 1_000]);
+        let object = chur_media::import::import_bytes(
+            &mut session,
+            chur_media::import::SourceCapability {
+                requested_object_id: None,
+                seekable: true,
+                known_length: Some(1_000),
+                content_type_hint: "application/octet-stream".into(),
+                original_filename: Some("item.bin".into()),
+                capture_time_ms: Some(7),
+            },
+            chur_media::import::CanonicalMedia {
+                media_class: MediaClass::Opaque,
+                width: 0,
+                height: 0,
+                duration_ms: 0,
+            },
+            "application/octet-stream",
+            &bytes,
+            NOW,
+        )
+        .unwrap();
+        let trusted = sweep_expired_trash(&mut session, NOW).unwrap();
+        assert_eq!(trusted, NOW);
+        trash::set(session.catalog().unwrap(), &[object], false, trusted).unwrap();
+        let note = notes::save(
+            session.catalog().unwrap(),
+            None,
+            0,
+            "kept",
+            "body",
+            false,
+            notes::NoteFormat::PlainText,
+            NOW,
+        )
+        .unwrap();
+        notes::change(
+            session.catalog().unwrap(),
+            &note.id,
+            note.revision,
+            3,
+            trusted,
+        )
+        .unwrap();
+
+        // The device clock now reads a month later, and the next sweep must not act on it.
+        let after = sweep_expired_trash(&mut session, NOW + MONTH + 1).unwrap();
+        assert_eq!(after, NOW);
+        assert_eq!(
+            trash::pending(session.catalog_ref().unwrap(), None).unwrap(),
+            vec![object]
+        );
+        assert_eq!(
+            notes::get(session.catalog_ref().unwrap(), &note.id)
+                .unwrap()
+                .deleted_ms,
+            Some(NOW)
+        );
+    }
 }

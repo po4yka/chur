@@ -1291,6 +1291,9 @@ pub(crate) unsafe fn duplicate_descriptor(fd: c_int) -> Result<std::fs::File> {
 ///
 /// A wrong device clock produces a wrong import time and Chur does not detect
 /// it. Nothing cryptographic depends on the value and it is not ordering proof.
+/// Retention is not judged against it either: trash and private-note expiry use
+/// `chur_catalog::trusted_time`, which takes this value only as an input that
+/// it bounds, `CATALOG_SCHEMA_V18.md`.
 pub(crate) fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

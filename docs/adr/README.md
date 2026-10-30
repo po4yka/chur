@@ -119,6 +119,7 @@ An ADR uses the document-status vocabulary defined once in [`../README.md`](../R
 | [0068](0068-carry-a-portable-catalog-export-in-backup-v2.md) | Carry a portable catalog export and a record commitment in backup version 2 | Accepted |
 | [0069](0069-re-encrypt-objects-after-revocation.md) | Delete superseded envelopes and re-encrypt objects after a revocation | Accepted |
 | [0070](0070-public-utilities-and-configured-entry.md) | Public utilities and configured entry | Accepted |
+| [0072](0072-judge-retention-by-a-trusted-time-mark.md) | Judge trash and note retention by a trusted-time mark | Accepted |
 
 Rows are ordered by ADR number. Number 0015 was not used; no ADR carries it and none will.
 

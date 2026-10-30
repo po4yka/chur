@@ -52,7 +52,12 @@ pub fn read_password(file: Option<&Path>) -> Result<Zeroizing<Vec<u8>>> {
     Ok(bytes)
 }
 
-/// The current time in milliseconds, `CATALOG_SCHEMA_V1.md` §8.1.
+/// The time that trash retention is judged against, `CATALOG_SCHEMA_V18.md`.
+fn trusted_now(session: &mut Session) -> Result<u64> {
+    chur_catalog::trusted_time::now(session.catalog()?, now_ms())
+}
+
+/// The device clock in milliseconds, `CATALOG_SCHEMA_V1.md` §8.1. Retention does not use it directly.
 pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -132,7 +137,8 @@ fn startup_work(session: &mut Session) -> Result<()> {
     export::clear_scratch(session)?;
     chur_media::backup::clear_snapshot(session)?;
     let swept = collect_deletions(session)?;
-    let expired = chur_catalog::trash::pending(session.catalog_ref()?, Some(now_ms()))?;
+    let trusted = trusted_now(session)?;
+    let expired = chur_catalog::trash::pending(session.catalog_ref()?, Some(trusted))?;
     for id in &expired {
         purge(session, id)?;
     }
@@ -391,12 +397,14 @@ pub fn read_range(session: &Session, object_id: &Id, offset: u64, length: u64) -
 
 /// Moves one active object to trash.
 pub fn delete(session: &mut Session, object_id: &Id) -> Result<()> {
-    chur_catalog::trash::set(session.catalog()?, &[*object_id], false, now_ms())
+    let trusted = trusted_now(session)?;
+    chur_catalog::trash::set(session.catalog()?, &[*object_id], false, trusted)
 }
 
 /// Restores one trashed object.
 pub fn restore(session: &mut Session, object_id: &Id) -> Result<()> {
-    chur_catalog::trash::set(session.catalog()?, &[*object_id], true, now_ms())
+    let trusted = trusted_now(session)?;
+    chur_catalog::trash::set(session.catalog()?, &[*object_id], true, trusted)
 }
 
 /// Restores every unexpired trash entry atomically.
@@ -405,7 +413,8 @@ pub fn restore_all(session: &mut Session) -> Result<()> {
     if ids.is_empty() {
         return Ok(());
     }
-    chur_catalog::trash::set(session.catalog()?, &ids, true, now_ms())
+    let trusted = trusted_now(session)?;
+    chur_catalog::trash::set(session.catalog()?, &ids, true, trusted)
 }
 
 /// Permanently erases one object and rolls its garbage collection forward.

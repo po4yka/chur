@@ -134,7 +134,8 @@ fun PetScreen(onOpenSettings: () -> Unit, onSubmitCode: (String) -> Boolean,
                                 CustomAccessibilityAction(resetLabel) { pet = pet.copy(interaction = pet.interaction.up(true).copy(x = pet.interaction.maxX / 2, y = pet.interaction.maxY / 2)); true },
                                 CustomAccessibilityAction(moveLabel) { pet = pet.copy(interaction = pet.interaction.copy(x = if (pet.interaction.x < pet.interaction.maxX / 2) pet.interaction.maxX else 0f)); event(GuideStep.PET_MOVE); true })
                         }
-                    }.pointerInput(sleeping, pet.activity == PetActivity.TOY, sizePx) {
+                    // guideToken is a key: a running gesture loop otherwise keeps the token it started with.
+                    }.pointerInput(sleeping, pet.activity == PetActivity.TOY, sizePx, guideToken) {
                         if (!sleeping && pet.activity != PetActivity.TOY) awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
                             val point = coordinates[0]?.takeIf { it.isAttached }?.localToRoot(down.position) ?: return@awaitEachGesture

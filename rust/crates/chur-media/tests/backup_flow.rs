@@ -818,6 +818,17 @@ fn a_restore_into_a_full_registry_is_refused() {
         .lock()
         .expect("lock");
 
+    // A wrong password learns nothing about the registry: it fails as it does
+    // on a device with room, `DECOY_VAULT.md` §10.
+    assert_eq!(
+        rejection(backup::restore(
+            &destination,
+            &mut package,
+            b"not the package password",
+            &mut Uninterrupted,
+        )),
+        ChurStatus::AuthenticationFailed
+    );
     assert_eq!(
         rejection(backup::restore(
             &destination,

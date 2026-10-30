@@ -756,13 +756,6 @@ fn restore_inner(
     progress: &mut impl Progress,
     catalog_limit: Option<u64>,
 ) -> Result<RestoreSummary> {
-    // §11 and `VAULT_DESCRIPTOR_V1.md` §11: the registry holds two identities.
-    ensure!(
-        root_dir.registry_names()?.len() < chur_catalog::paths::REGISTRY_MAX,
-        Conflict,
-        "the registry already holds the two identities §11 admits"
-    );
-
     let package_length = source
         .seek(SeekFrom::End(0))
         .map_err(|_| chur_core::err!(IoFailure, "the package length could not be read"))?;
@@ -800,6 +793,16 @@ fn restore_inner(
         chur_core::limits::descriptor::LENGTH_MAX as u64,
     )?;
     let (descriptor, root_secret) = open_portable_descriptor(&descriptor_bytes, credential)?;
+    // §11 and `VAULT_DESCRIPTOR_V1.md` §11: the registry holds two identities.
+    // The refusal follows the credential check, so a full registry is told only
+    // to a caller who holds the package's credential; before it, any file and
+    // any password would answer differently on a device with two identities,
+    // `DECOY_VAULT.md` §10.
+    ensure!(
+        root_dir.registry_names()?.len() < chur_catalog::paths::REGISTRY_MAX,
+        Conflict,
+        "the registry already holds the two identities §11 admits"
+    );
     let key = manifest_key(&root_secret, &descriptor.vault_id)?;
 
     let manifest_payload = read_payload_bounded(

@@ -2548,7 +2548,9 @@ class ChurController(
      * `start` is that question, it opens no runtime that is already open, and
      * it is what moves the shell from creation to the unlock gate.
      *
-     * The message is the status's [userCopy] and nothing more, as every other
+     * `CONFLICT` is the exception: a refused restore is a refused creation and
+     * says the creation sentence, `DECOY_VAULT.md` §5. Every other message is
+     * the status's [userCopy] and nothing more, as every other
      * boundary failure's is: `docs/ERROR_MODEL.md` "Safe metadata" keeps a
      * private value out of it, and the package's password is one. [close] is
      * told whether the user cancelled, so the route can show that calmly
@@ -2581,6 +2583,13 @@ class ChurController(
                     }
                     if (terminal != 0) {
                         cancelled = terminal == ChurStatus.CANCELLED.value
+                        if (terminal == ChurStatus.CONFLICT.value) {
+                            // The creation sentence: a refused restore is a
+                            // refused creation, `DECOY_VAULT.md` §5, and a
+                            // reason would answer what §10 refuses to.
+                            say("This vault could not be created. Try a different credential.")
+                            return@tracked
+                        }
                         throw ChurFailure(ChurStatus.fromValue(terminal), "the restore")
                     }
                     withContext(Dispatchers.Default) { repository.start() }

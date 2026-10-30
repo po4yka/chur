@@ -153,6 +153,7 @@ The Rust core enforces one local delay in `chur_vault_unlock`, so a host cannot 
 - the record keeps the end of the delay on the boot clock (`CLOCK_BOOTTIME` on Android, `CLOCK_MONOTONIC` on Apple platforms, which count time asleep) and the boot identifier (`/proc/sys/kernel/random/boot_id` on Android, `kern.bootsessionuuid` on Apple platforms). The wall clock has no part in the decision, so changing it does not shorten the delay;
 - after a reboot, the full delay of the current count runs again, measured from the boot. A reboot therefore gains nothing, and a user waits at most one delay. Where the boot identifier cannot be read, a boot clock below the time of the last failure shows the reboot;
 - a record that cannot be read counts as the first delayed failure.
+- creation and backup restore derive the new password against each installed identity to refuse a collision. Those derivations are not counted or delayed, and the oracle is accepted as recorded in [`DECOY_VAULT.md`](DECOY_VAULT.md) §5.
 
 A user who deletes app data removes the count. This is accepted: the delay slows casual guessing on the device, and Argon2id remains the defence against an offline attack.
 

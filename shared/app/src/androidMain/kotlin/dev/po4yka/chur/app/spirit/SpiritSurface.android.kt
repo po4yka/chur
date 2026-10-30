@@ -119,6 +119,7 @@ private class SpiritTexture(context: Context, private val data: ByteArray, priva
     private var dirty = true
     private var lean = 0f
     private var visibilityPolling = false
+    private val visibleRect = android.graphics.Rect()
     private val visibilityPoll = Runnable { visibilityPolling = false; dirty = true; schedule() }
     private val frameClock = Choreographer.getInstance()
     private val hostActivity = generateSequence(context) { (it as? ContextWrapper)?.baseContext }
@@ -266,7 +267,8 @@ private class SpiritTexture(context: Context, private val data: ByteArray, priva
             if (node.visibility != VISIBLE || node.alpha <= 0f) return false
             node = node.parent as? android.view.View
         }
-        return isShown
+        // Compose scrolls or clips an AndroidView without changing its visibility; skip frames nobody can see.
+        return isShown && getGlobalVisibleRect(visibleRect)
     }
     private fun schedule() {
         // Ancestor alpha changes have no reliable child callback. Poll only

@@ -19,13 +19,15 @@ fun advanceSpiritTail(previous: FloatArray, input: Float, seconds: Float, reduce
     val dt = if (seconds.isFinite()) seconds.coerceIn(0f, .25f) else 0f
     val steps = kotlin.math.ceil(dt * 240f).toInt().coerceAtLeast(1)
     val step = dt / steps
+    // Non-finite values become 0, as in the C++ boundedInput, so one bad sample cannot poison the tail.
+    fun bounded(value: Float) = if (value.isFinite()) value.coerceIn(-1f, 1f) else 0f
     var result = previous.copyOf()
     repeat(steps) {
         val before = result
         result = FloatArray(previous.size) { index ->
-            val target = (if (index == 0) input else before[index - 1]).coerceIn(-1f, 1f)
+            val target = bounded(if (index == 0) input else before[index - 1])
             val blend = 1f - kotlin.math.exp(-step * (12f - index))
-            (before[index] + (target - before[index]) * blend).coerceIn(-1f, 1f)
+            bounded(before[index] + (target - before[index]) * blend)
         }
     }
     return result

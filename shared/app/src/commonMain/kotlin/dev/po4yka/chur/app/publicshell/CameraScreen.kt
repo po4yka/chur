@@ -161,7 +161,7 @@ fun CameraScreen(
                         TextButton(onClick = { controls = !controls }) { Text(utilityText("Controls", "Настройки съёмки")) }
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(56.dp).combinedClickable(enabled = !recording && countdown == 0, onClick = { showGallery(true) }, onLongClick = { enteringCode = true }, onLongClickLabel = utilityText("Enter code", "Ввести код")), contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(56.dp).combinedClickable(enabled = !recording && countdown == 0, onClick = { showGallery(true) }, onLongClick = { enteringCode = true }, onLongClickLabel = utilityText("More options", "Другие действия")), contentAlignment = Alignment.Center) {
                             val latest by produceState<ImageBitmap?>(null, photos.firstOrNull()?.id) {
                                 value = photos.firstOrNull()?.let { thumbnail(it.id) }
                             }

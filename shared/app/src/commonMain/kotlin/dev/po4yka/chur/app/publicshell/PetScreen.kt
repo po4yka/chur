@@ -50,7 +50,8 @@ fun PetScreen(onOpenSettings: () -> Unit, onSubmitCode: (String) -> Boolean,
     val resetLabel = utilityText("Reset position", "Вернуть на место")
     val moveLabel = utilityText("Move Chur", "Переместить Чура")
     val sleepLabel = utilityText(if (sleeping) "Wake" else "Sleep", if (sleeping) "Разбудить" else "Сон")
-    val accessLabel = utilityText("Open access", "Открыть доступ")
+    // Neutral on purpose: a decoy app must not announce a hidden entry to every screen-reader user.
+    val accessLabel = utilityText("More options", "Другие действия")
     fun event(step: GuideStep) { guide?.event(step, guideToken) }
     fun act(action: PetAction) { pet = pet.act(action) }
     DisposableEffect(enteringCode) { onNavigationBusy(enteringCode); onDispose { onNavigationBusy(false) } }

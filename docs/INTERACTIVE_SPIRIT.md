@@ -15,7 +15,8 @@ The 144dp touch target includes transparent margins. An undersized scene keeps
 controls usable and does not create a renderer.
 
 Tap the moon to change sleep. Hold it to enter the transition code, then use
-normal authentication. The long press has an accessibility equivalent. Input
+normal authentication. The long press has an accessibility equivalent, labelled
+neutrally ("More options") so it does not announce a hidden entry. Input
 is transient and is cleared on background and dismissal. About's Version
 fallback remains available. Public pet help does not explain private access.
 

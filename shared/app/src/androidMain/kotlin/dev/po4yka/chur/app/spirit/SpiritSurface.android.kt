@@ -232,7 +232,10 @@ private class SpiritTexture(context: Context, private val data: ByteArray, priva
                 dirty = true; schedule()
             }
             override fun onDetachedFromSurface() {
-                stop(); swapChain?.let { e.destroySwapChain(it) }; swapChain = null; e.flushAndWait()
+                stop()
+                // A late surface-destroyed callback can arrive after release() destroyed the engine.
+                val live = engine ?: return
+                swapChain?.let { live.destroySwapChain(it) }; swapChain = null; live.flushAndWait()
             }
             override fun onResized(w: Int, h: Int) {
                 v.viewport = Viewport(0, 0, w, h)

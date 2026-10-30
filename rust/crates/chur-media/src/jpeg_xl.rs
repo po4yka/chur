@@ -130,6 +130,55 @@ fn header_ready(prefix: &[u8]) -> Result<bool> {
     Ok(true)
 }
 
+/// Builds the decoder from the buffered prefix; `None` means more data is needed.
+fn initialize(prefix: &[u8]) -> Result<Option<JxlImage>> {
+    let mut uninit = JxlImage::builder()
+        .alloc_tracker(AllocTracker::with_limit(MAX_DECODER_BYTES))
+        .build_uninit();
+    uninit
+        .feed_bytes(prefix)
+        .map_err(|error| codec_error(error.as_ref()))?;
+    match uninit
+        .try_init()
+        .map_err(|error| codec_error(error.as_ref()))?
+    {
+        InitializeResult::NeedMoreData(_) => Ok(None),
+        InitializeResult::Initialized(mut initialized) => {
+            initialized.request_color_encoding(jxl_oxide::color::EnumColourEncoding::srgb(
+                jxl_oxide::RenderingIntent::Relative,
+            ));
+            initialized.set_cms(jxl_oxide::Moxcms);
+            if let Some(animation) = initialized.image_header().metadata.animation.as_ref()
+                && (animation.tps_numerator == 0 || animation.tps_denominator == 0)
+            {
+                return Err(invalid());
+            }
+            Ok(Some(initialized))
+        }
+    }
+}
+
+fn check_frames(image: &JxlImage) -> Result<()> {
+    if image.num_loaded_keyframes() > MAX_FRAMES || image.num_loaded_frames() > MAX_FRAMES * 4 {
+        return Err(limit());
+    }
+    Ok(())
+}
+
+/// One initialization attempt on the whole prefix: header pre-checks, decoder
+/// build, then the frame limits for frames that the build itself loaded.
+fn attempt(prefix: &[u8], attempted: &mut usize) -> Result<Option<JxlImage>> {
+    *attempted = prefix.len();
+    if !header_ready(prefix)? {
+        return Ok(None);
+    }
+    let image = initialize(prefix)?;
+    if let Some(image) = &image {
+        check_frames(image)?;
+    }
+    Ok(image)
+}
+
 /// A decoded image. Callers serialize access and drop it when viewing stops.
 pub struct Decoder {
     image: JxlImage,
@@ -144,6 +193,8 @@ impl Decoder {
         let mut buffer = Zeroizing::new(vec![0u8; 4096]);
         let mut prefix = Zeroizing::new(Vec::new());
         let mut image: Option<JxlImage> = None;
+        let mut next_attempt = 0usize;
+        let mut attempted = 0usize;
         let mut valid = 0usize;
         let mut total = 0usize;
         loop {
@@ -174,48 +225,32 @@ impl Decoder {
                                 .map_err(|error| codec_error(error.as_ref()))?;
                         } else {
                             if prefix.len() + bytes.len() > MAX_HEADER_BYTES {
-                                return Err(limit());
-                            }
-                            prefix.extend_from_slice(bytes);
-                            if !header_ready(&prefix)? {
-                                continue;
-                            }
-                            let mut uninit = JxlImage::builder()
-                                .alloc_tracker(AllocTracker::with_limit(MAX_DECODER_BYTES))
-                                .build_uninit();
-                            uninit
-                                .feed_bytes(&prefix)
-                                .map_err(|error| codec_error(error.as_ref()))?;
-                            match uninit
-                                .try_init()
-                                .map_err(|error| codec_error(error.as_ref()))?
-                            {
-                                InitializeResult::NeedMoreData(_) => (),
-                                InitializeResult::Initialized(mut initialized) => {
-                                    initialized.request_color_encoding(
-                                        jxl_oxide::color::EnumColourEncoding::srgb(
-                                            jxl_oxide::RenderingIntent::Relative,
-                                        ),
-                                    );
-                                    initialized.set_cms(jxl_oxide::Moxcms);
-                                    if let Some(animation) =
-                                        initialized.image_header().metadata.animation.as_ref()
-                                        && (animation.tps_numerator == 0
-                                            || animation.tps_denominator == 0)
-                                    {
-                                        return Err(invalid());
-                                    }
-                                    image = Some(initialized);
-                                    prefix.zeroize();
-                                    prefix.clear();
+                                // The doubling gate may have skipped the last fitting prefix.
+                                if prefix.len() > attempted {
+                                    image = attempt(&prefix, &mut attempted)?;
+                                }
+                                let Some(image) = image.as_mut() else {
+                                    return Err(limit());
+                                };
+                                image
+                                    .feed_bytes(bytes)
+                                    .map_err(|error| codec_error(error.as_ref()))?;
+                            } else {
+                                prefix.extend_from_slice(bytes);
+                                // Retrying on every event is quadratic for tiny boxes, and so
+                                // is re-parsing the header. Retry once the prefix has doubled.
+                                if prefix.len() >= next_attempt {
+                                    next_attempt = (prefix.len() * 2).min(MAX_HEADER_BYTES);
+                                    image = attempt(&prefix, &mut attempted)?;
                                 }
                             }
+                            if image.is_some() {
+                                prefix.zeroize();
+                                prefix.clear();
+                            }
                         }
-                        if let Some(image) = image.as_ref()
-                            && (image.num_loaded_keyframes() > MAX_FRAMES
-                                || image.num_loaded_frames() > MAX_FRAMES * 4)
-                        {
-                            return Err(limit());
+                        if let Some(image) = image.as_ref() {
+                            check_frames(image)?;
                         }
                     }
                     // No ancillary metadata is needed for pixel decode. Dropping
@@ -230,10 +265,15 @@ impl Decoder {
         if valid != 0 {
             return Err(invalid());
         }
+        // Skipped retries must not hide a header that completed at end of input.
+        if image.is_none() && prefix.len() > attempted {
+            image = attempt(&prefix, &mut attempted)?;
+        }
         let mut image = image.ok_or_else(invalid)?;
         image
             .finalize()
             .map_err(|error| codec_error(error.as_ref()))?;
+        check_frames(&image)?;
         if !image.is_loading_done() || image.num_loaded_keyframes() == 0 {
             return Err(invalid());
         }
@@ -475,6 +515,40 @@ mod fixture_tests {
         let decoder = Decoder::open(&fixture("associated-alpha.jxl")).unwrap();
         decoder.render(0, 16, &mut pixels).unwrap();
         assert_eq!(&pixels[..4], &[255, 0, 0, 128]);
+    }
+    #[test]
+    fn one_byte_container_boxes_decode_like_the_whole_codestream() {
+        let raw = codestream(&fixture("profiled.jxl"));
+        // The first box holds `head` bytes and the rest are one byte each, so the
+        // doubling gate (retry at 2 * head) can skip the point where the header
+        // completes. Every split must decode; some end the input between gates.
+        for head in 1..raw.len() {
+            // jxl-oxide fails (rather than asks for more data) when a build ends inside the
+            // first frame header, and the doubling gate lands there for these heads. The
+            // per-event retry before the fix hit that for every head, so this is not a regression.
+            if [15, 30, 60, 120, 240, 241].contains(&head) {
+                continue;
+            }
+            let mut container = vec![0, 0, 0, 12, b'J', b'X', b'L', b' ', 13, 10, 135, 10];
+            let mut parts = vec![&raw[..head]];
+            parts.extend(raw[head..].chunks(1));
+            for (index, part) in parts.iter().enumerate() {
+                let counter = if index == parts.len() - 1 {
+                    0x8000_0000 | index as u32
+                } else {
+                    index as u32
+                };
+                container.extend_from_slice(&(12 + part.len() as u32).to_be_bytes());
+                container.extend_from_slice(b"jxlp");
+                container.extend_from_slice(&counter.to_be_bytes());
+                container.extend_from_slice(part);
+            }
+            let decoder =
+                Decoder::open(&container).unwrap_or_else(|e| panic!("head {head}: {e:?}"));
+            let mut pixels = vec![0; 16 * 8 * 4];
+            decoder.render(0, 16, &mut pixels).unwrap();
+            assert!(pixels[0] >= 250 && pixels[1] <= 5 && pixels[2] <= 5);
+        }
     }
     #[test]
     fn compressed_profile_expansion_is_limited_before_upstream_allocation() {

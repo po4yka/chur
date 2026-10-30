@@ -34,6 +34,13 @@ class PetStateTest {
         assertTrue(smooth.interaction.x > pet.interaction.x && smooth.interaction.x < 300f)
         assertEquals(PetActivity.REST, pet.act(PetAction.TOY).activity)
     }
+    @Test fun toy_is_offered_away_from_the_pet() {
+        val room = SpiritInteraction().bounds(500f, 700f, 144f)
+        assertEquals(Pair(428f, 350f), PetState(room.copy(x = 178f, y = 278f)).toyOffer(144f))
+        assertEquals(Pair(72f, 72f), PetState(room.copy(x = 300f, y = 0f)).toyOffer(144f))
+        val narrow = SpiritInteraction().bounds(144f, 700f, 144f).copy(y = 100f)
+        assertEquals(Pair(72f, 628f), PetState(narrow).toyOffer(144f))
+    }
     @Test fun ending_a_drag_or_activity_never_persists_a_session() {
         val dragged = PetState(SpiritInteraction().bounds(500f, 700f, 144f).down(0f, 0f).move(100f, 100f, 8f))
         val sleeping = dragged.act(PetAction.SLEEP)

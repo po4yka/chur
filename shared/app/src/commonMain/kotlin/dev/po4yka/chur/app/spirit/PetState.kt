@@ -32,6 +32,14 @@ data class PetState(
 
     fun settleTreat(): PetState = if (activity == PetActivity.TREAT) act(PetAction.GREET) else this
 
+    /** Toy centre on the far side of the scene, so the pet visibly travels to it. */
+    fun toyOffer(size: Float): Pair<Float, Float> {
+        val i = interaction
+        val half = size / 2
+        return if (i.maxX > 0f) Pair((if (i.x <= i.maxX / 2) i.maxX else 0f) + half, i.y + half)
+        else Pair(i.x + half, (if (i.y <= i.maxY / 2) i.maxY else 0f) + half)
+    }
+
     fun follow(x: Float, y: Float, seconds: Float): PetState {
         if (activity != PetActivity.TOY || !x.isFinite() || !y.isFinite() || !seconds.isFinite()) return this
         val fraction = if (interaction.render.reducedMotion) 1f else 1f - exp(-seconds.coerceIn(0f, .1f) * 6f)

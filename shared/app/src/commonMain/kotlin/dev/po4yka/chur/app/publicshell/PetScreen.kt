@@ -167,7 +167,7 @@ fun PetScreen(onOpenSettings: () -> Unit, onSubmitCode: (String) -> Boolean,
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(enabled = !sleeping, modifier = Modifier.guideTarget("treat"), onClick = { act(PetAction.TREAT); treatSerial++ }) { Text(utilityText("Treat", "Угостить")) }
                 TextButton(enabled = !sleeping, modifier = Modifier.guideTarget("toy"), onClick = {
-                    toy = Offset((pet.interaction.maxX - pet.interaction.x) + sizePx / 2, pet.interaction.y + sizePx / 2)
+                    toy = pet.toyOffer(sizePx).let { (x, y) -> Offset(x, y) }
                     act(PetAction.TOY)
                 }) { Text(utilityText(if (pet.activity == PetActivity.TOY) "Put toy away" else "Toy", if (pet.activity == PetActivity.TOY) "Убрать игрушку" else "Игрушка")) }
                 Box(Modifier.guideTarget("sleep").combinedClickable(

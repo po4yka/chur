@@ -89,6 +89,7 @@ private class SpiritTexture(context: Context, private val data: ByteArray, priva
     private var resources: ResourceLoader? = null
     private var materials: UbershaderProvider? = null
     private var asset: FilamentAsset? = null
+    private var loading = false
     private var light = 0
     private var eyes = intArrayOf()
     private var tails = intArrayOf()
@@ -190,7 +191,9 @@ private class SpiritTexture(context: Context, private val data: ByteArray, priva
         val a = checkNotNull(al.createAsset(ByteBuffer.allocateDirect(data.size).apply { put(data); flip() }))
         asset = a
         val rl = ResourceLoader(e).also { resources = it }
-        rl.loadResources(a)
+        // Decode textures on Filament's worker threads; doFrame uploads them as they finish.
+        check(rl.asyncBeginLoad(a)) { "Resource load failed" }
+        loading = true
         eyes = a.entities.filter { a.getName(it) == "Spirit_Eye_L" || a.getName(it) == "Spirit_Eye_R" }.toIntArray()
         check(eyes.size == 2) { "Eye contract mismatch" }
         eyeInstances = IntArray(2) { e.renderableManager.getInstance(eyes[it]) }
@@ -217,7 +220,6 @@ private class SpiritTexture(context: Context, private val data: ByteArray, priva
             if (renderable != 0) e.renderableManager.setCulling(renderable, false)
         }
         s.addEntities(a.entities)
-        a.releaseSourceData()
         val ui = UiHelper(UiHelper.ContextErrorPolicy.DONT_CHECK).also { helper = it }
         ui.isOpaque = false
         ui.renderCallback = object : UiHelper.RendererCallback {
@@ -291,6 +293,13 @@ private class SpiritTexture(context: Context, private val data: ByteArray, priva
         lastFrame = time
         clipTime += dt; transitionTime += dt; motionInputAge += dt
         val a = asset ?: return
+        if (loading) {
+            val rl = resources ?: return
+            rl.asyncUpdateLoad()
+            if (rl.asyncGetLoadProgress() < 1f) { schedule(); return }
+            loading = false
+            a.releaseSourceData()
+        }
         val animator = a.instance.animator
         // Export optimizes constant channels out of some clips. Restore rest first,
         // otherwise an interrupted tap can leave MotionRoot rotated during a hold.
@@ -348,6 +357,7 @@ private class SpiritTexture(context: Context, private val data: ByteArray, priva
         released = true; stop(); hostLifecycle?.removeObserver(lifecycleObserver)
         val e = engine ?: return
         helper?.detach(); helper = null
+        if (loading) { resources?.asyncCancelLoad(); loading = false }
         asset?.let { scene?.removeEntities(it.entities); loader?.destroyAsset(it) }; asset = null
         animationIndex = emptyMap(); poseInstances = intArrayOf(); restPose = emptyArray(); authoredPose = emptyArray(); transitionPose = null; authoredReady = false
         tailPoseIndex = intArrayOf(); tailInstances = intArrayOf(); eyeInstances = intArrayOf(); rootInstance = 0

@@ -5,8 +5,6 @@ import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -16,9 +14,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -60,8 +55,6 @@ fun CameraScreen(
     var selected by remember { mutableStateOf(setOf<String>()) }
     var deleting by remember { mutableStateOf<List<String>>(emptyList()) }
     var enteringCode by remember { mutableStateOf(false) }
-    var code by remember { mutableStateOf("") }
-    var codeError by remember { mutableStateOf(false) }
     var disclosure by remember { mutableStateOf(false) }
     var grid by remember { mutableStateOf(false) }
     var controls by remember { mutableStateOf(false) }
@@ -79,22 +72,7 @@ fun CameraScreen(
         title = { Text(utilityText("Data storage", "Хранение данных")) }, text = { Text(utilityText(PUBLIC_CAMERA_DISCLOSURE, "Фото и видео не зашифрованы приложением и входят в системную резервную копию. Они сохраняются внутри приложения. Экспорт в системную галерею выполняется только по вашему действию.")) },
         confirmButton = { TextButton(onClick = { onAcknowledgeDisclosure(); disclosure = false }) { Text(utilityText("Got it", "Понятно")) } },
         dismissButton = { TextButton(onClick = { disclosure = false }) { Text(utilityText("Cancel", "Отмена")) } })
-    if (enteringCode) {
-        fun submit() {
-            val candidate = code; code = ""
-            if (onSubmitCode(candidate)) { enteringCode = false; codeError = false } else codeError = true
-        }
-        AlertDialog(onDismissRequest = { enteringCode = false; code = ""; codeError = false },
-            title = { Text(utilityText("Access code", "Код доступа")) }, text = {
-                Column {
-                    OutlinedTextField(code, { code = it.filter { c -> c in '0'..'9' }.take(8) }, singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { submit() }))
-                    if (codeError) Text(utilityText("Code not recognized.", "Код не распознан."))
-                }
-            }, confirmButton = { TextButton(onClick = ::submit) { Text(utilityText("Continue", "Продолжить")) } },
-            dismissButton = { TextButton(onClick = { enteringCode = false; code = ""; codeError = false }) { Text(utilityText("Cancel", "Отмена")) } })
-    }
+    if (enteringCode) AccessCodeDialog(onSubmitCode) { enteringCode = false }
     if (deleting.isNotEmpty()) AlertDialog(onDismissRequest = { deleting = emptyList() }, title = { Text(utilityText("Delete selected files?", "Удалить выбранные файлы?")) },
         text = { Text(utilityText("This cannot be undone. Export files you want to keep first.", "Это действие нельзя отменить. Сначала экспортируйте файлы, которые хотите сохранить.")) },
         confirmButton = { TextButton(enabled = !busy, onClick = { deleting.forEach(onDeletePhoto); deleting = emptyList(); selected = emptySet() }) { Text(utilityText("Delete", "Удалить")) } },

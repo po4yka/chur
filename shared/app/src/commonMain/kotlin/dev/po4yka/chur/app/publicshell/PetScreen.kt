@@ -8,8 +8,6 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,11 +20,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.*
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import dev.po4yka.chur.app.PrivateTextInput
 import dev.po4yka.chur.app.spirit.*
 import dev.po4yka.chur.app.onboarding.*
 import dev.po4yka.chur.app.theme.LocalChurMotion
@@ -50,8 +44,6 @@ fun PetScreen(onOpenSettings: () -> Unit, onSubmitCode: (String) -> Boolean,
     var treat by remember { mutableFloatStateOf(0f) }
     var treatSerial by remember { mutableIntStateOf(0) }
     var enteringCode by remember(inputEpoch) { mutableStateOf(false) }
-    var code by remember(inputEpoch) { mutableStateOf("") }
-    var codeError by remember(inputEpoch) { mutableStateOf(false) }
     val coordinates = remember { arrayOfNulls<LayoutCoordinates>(1) }
     val sleeping = pet.activity == PetActivity.SLEEP
     val greetLabel = utilityText("Greet Chur", "Погладить Чура")
@@ -85,21 +77,7 @@ fun PetScreen(onOpenSettings: () -> Unit, onSubmitCode: (String) -> Boolean,
             event(GuideStep.PET_TOY)
         }
     }
-    if (enteringCode) PrivateTextInput(enabled = true) {
-        fun close() { enteringCode = false; code = ""; codeError = false }
-        fun submit() { val candidate = code; code = ""; if (onSubmitCode(candidate)) close() else codeError = true }
-        AlertDialog(onDismissRequest = ::close, title = { Text(utilityText("Access code", "Код доступа")) }, text = {
-            Column {
-                OutlinedTextField(code, { code = it.filter { c -> c in '0'..'9' }.take(8); codeError = false },
-                    label = { Text(utilityText("8-digit code", "Код из 8 цифр")) }, singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { if (code.length == 8) submit() }))
-                if (codeError) Text(utilityText("Code not recognized.", "Код не распознан."))
-            }
-        }, confirmButton = { TextButton(enabled = code.length == 8, onClick = ::submit) { Text(utilityText("Continue", "Продолжить")) } },
-            dismissButton = { TextButton(onClick = ::close) { Text(utilityText("Cancel", "Отмена")) } })
-    }
+    if (enteringCode) AccessCodeDialog(onSubmitCode) { enteringCode = false }
     Scaffold(topBar = { TopAppBar(title = { Text(utilityText("Chur", "Чур")) }, actions = {
         IconButton(onClick = onOpenSettings) { Icon(SettingsGlyph, utilityText("Settings", "Настройки")) }
     }) }) { padding ->

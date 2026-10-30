@@ -1856,6 +1856,40 @@ pub fn install_descriptor(
     sync_directory(&root_dir.registry())
 }
 
+/// Refuses a restore that the registry cannot hold as a distinct identity.
+///
+/// Besides the two-entry bound of `VAULT_DESCRIPTOR_V1.md` §11, an installed
+/// identity with the same `vault_id`, or one the credential already opens, is a
+/// conflict. `KEY_SLOTS.md` §8 returns the first candidate a password opens, in
+/// filename order, so such a pair would make unlock pick one of the two copies
+/// at random and leave the other unreachable, the rule
+/// [`create_with_params`] applies to a new identity.
+///
+/// # Errors
+///
+/// Returns [`ChurStatus::Conflict`] on any of the three conditions.
+pub fn ensure_restorable(root_dir: &VaultRoot, vault_id: &Id, credential: &[u8]) -> Result<()> {
+    let existing = root_dir.registry_names()?;
+    ensure!(
+        existing.len() < crate::paths::REGISTRY_MAX,
+        Conflict,
+        "the registry already holds the two identities §11 admits"
+    );
+    for name in &existing {
+        let bytes = read_entry(root_dir, name)?;
+        let Ok(installed) = VaultDescriptor::parse(&bytes) else {
+            continue;
+        };
+        ensure!(
+            installed.vault_id != *vault_id
+                && open_password_slot_of(&installed, credential).is_err(),
+            Conflict,
+            "the registry already holds this identity or one this credential opens"
+        );
+    }
+    Ok(())
+}
+
 /// Validates and, when needed, migrates a restored catalog before its
 /// descriptor is installed into the registry.
 ///

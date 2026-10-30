@@ -793,16 +793,12 @@ fn restore_inner(
         chur_core::limits::descriptor::LENGTH_MAX as u64,
     )?;
     let (descriptor, root_secret) = open_portable_descriptor(&descriptor_bytes, credential)?;
-    // §11 and `VAULT_DESCRIPTOR_V1.md` §11: the registry holds two identities.
-    // The refusal follows the credential check, so a full registry is told only
-    // to a caller who holds the package's credential; before it, any file and
-    // any password would answer differently on a device with two identities,
-    // `DECOY_VAULT.md` §10.
-    ensure!(
-        root_dir.registry_names()?.len() < chur_catalog::paths::REGISTRY_MAX,
-        Conflict,
-        "the registry already holds the two identities §11 admits"
-    );
+    // §11 and `VAULT_DESCRIPTOR_V1.md` §11: the registry holds two identities,
+    // each reachable by its own credential. The refusal follows the credential
+    // check, so a full registry is told only to a caller who holds the package
+    // credential; before it, any file and any password would answer differently
+    // on a device with two identities, `DECOY_VAULT.md` §10.
+    vault::ensure_restorable(root_dir, &descriptor.vault_id, credential)?;
     let key = manifest_key(&root_secret, &descriptor.vault_id)?;
 
     let manifest_payload = read_payload_bounded(
@@ -931,9 +927,9 @@ fn restore_inner(
     // The local path identifiers are drawn fresh rather than taken from the
     // package. `VAULT_DESCRIPTOR_V1.md` §6 makes them opaque random names of
     // this device's storage layout, not of the identity, and reusing the source
-    // device's would collide with whatever already occupies that name here —
-    // including, when a package is restored beside the vault it came from,
-    // that very vault. The descriptor is re-sealed under the root the package's
+    // device's would collide with whatever already occupies that name here.
+    // (`vault::ensure_restorable` already refuses a package whose identity is
+    // installed.) The descriptor is re-sealed under the root the package's
     // own slot returned, which is the same operation a creation performs.
     let store_id = random::id()?;
     let catalog_path_id = random::id()?;
@@ -1173,13 +1169,18 @@ fn restore_inner(
     // from the value still in memory — the same read-back a creation performs.
     //
     // It is not verified by unlocking. An unlock resolves a credential across
-    // the whole registry and returns the first identity it opens, so a device
-    // that already holds an identity with this password would hand back that
-    // one, and the check would fail on a restore that had in fact succeeded.
-    // The root is already here; authenticating with it asks the question this
+    // the whole registry and returns the first identity it opens, and a
+    // concurrent creation can have installed one since the early check. The
+    // root is already here; authenticating with it asks the question this
     // step actually has.
     let entry_name = RegistryName::random()?;
     let local_bytes = local.encode(&root_secret)?;
+    // The early check ran before the long copy; a creation or restore in
+    // another runtime may have installed an identity since.
+    if let Err(error) = vault::ensure_restorable(root_dir, &descriptor.vault_id, credential) {
+        let _ = std::fs::remove_dir_all(root_dir.vault(&store_id));
+        return Err(error);
+    }
     vault::install_descriptor(root_dir, &entry_name, &local_bytes)?;
     let confirmed = (|| -> Result<()> {
         let written = std::fs::read(root_dir.registry_entry(&entry_name))

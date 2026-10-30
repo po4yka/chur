@@ -229,6 +229,8 @@ The domain tag is a fixed ASCII byte constant with no length prefix, per [`CANON
 9. sync every restored directory (each shard directory, `objects/`, the vault directory and its parent), then commit local vault descriptor atomically. A directory sync error stops the restore. Only a result that means the platform cannot sync a directory is accepted;
 10. clean temporary state.
 
+The restore checks the target registry only after steps 2 and 3 have obtained the factor and authenticated the package descriptor, so a caller who holds no valid package gets the same result on every device. It then returns `CONFLICT` and installs nothing when the registry already holds two identities, holds an identity with the package's `vault_id`, or holds an identity the package credential opens. The check repeats just before the descriptor is installed. Unlock returns the first identity a credential opens, so a second copy under one credential would be chosen at random and the other would be unreachable. A restore with a recovery phrase cannot see the package's password, so a package password that equals an installed identity's password is not detected; the user can change one password after the restore.
+
 ## 9. Confidentiality and leakage
 
 The outer package may reveal:

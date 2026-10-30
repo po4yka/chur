@@ -69,6 +69,24 @@ class SelectiveArchiveControllerHostTest {
     }
 
     @Test
+    fun a_restore_under_an_installed_password_says_the_creation_sentence() = scenario {
+        // An archive sealed under the vault's own password is refused by the
+        // core as a collision (`DECOY_VAULT.md` §5). The refusal must read as a
+        // refused creation, not as the sync conflict copy of `CONFLICT`.
+        ArchiveTransferOwner(controller, generation).export(request, ArchiveCredential(SOURCE_PASSWORD), ExportTarget.SHARE)
+        val archive = sink.closedOutput()
+        withTimeout(TIMEOUT) { controller.notice.first { it?.text?.startsWith("Encrypted archive ready.") == true } }
+        controller.restoreArchiveAsSeparateVault()
+        withTimeout(TIMEOUT) { controller.route.first { it == AppRoute.RestoreBackup } }
+        val input = RandomAccessFile(archive.file, "r")
+        val closed = CompletableDeferred<Boolean>()
+        controller.restoreBackup(descriptor(input), ArchiveCredential(SOURCE_PASSWORD)) { cancelled -> input.close(); closed.complete(cancelled) }
+        assertFalse(withTimeout(TIMEOUT) { closed.await() })
+        assertEquals("This vault could not be created. Try a different credential.", controller.formError.value)
+        assertEquals(AppRoute.RestoreBackup, controller.route.value)
+    }
+
+    @Test
     fun a_tiny_host_capacity_reaches_native_and_discards_the_incomplete_archive() = scenario {
         sink.capacity = 64
         val credential = ArchiveCredential(ARCHIVE_PASSWORD)

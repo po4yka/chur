@@ -971,29 +971,48 @@ fn a_restore_stops_inside_a_container_rather_than_between_files() {
     assert!(destination.registry_names().unwrap().is_empty());
 }
 
-/// A package restored beside the vault it came from must not touch that vault.
+/// A package restored beside the vault it came from is refused and leaves
+/// that vault alone.
 ///
-/// The local path identifiers of `VAULT_DESCRIPTOR_V1.md` §6 name this device's
-/// storage layout, not the identity, so a restore draws its own rather than
-/// reusing the source device's. Before that, restoring a package next to its
-/// own vault wrote into that vault's directory, and a failure on the way
-/// removed it.
+/// A second copy of one identity, or a second identity under a password the
+/// first already opens, would make unlock pick between them at random
+/// (`KEY_SLOTS.md` §8). Each clause of `vault::ensure_restorable` has its own
+/// case: the password opens an installed identity, and, through the recovery
+/// phrase which no installed password slot can match, the `vault_id` alone
+/// is installed.
 #[test]
-fn a_restore_beside_its_source_leaves_the_source_alone() {
+fn a_restore_beside_its_source_is_refused_and_leaves_the_source_alone() {
     let (root, mut session) = new_vault();
     let (object_id, bytes) = import_one(&mut session, 40_000, "a.jpg", 0x9999);
     let source_store = session.object_store_id();
     let source_vault_id = session.vault_id();
+    let phrase = recovery::to_phrase(&session.add_recovery_slot().expect("recovery"));
 
     let mut package = Cursor::new(Vec::new());
     backup::create(&mut session, &mut package, NOW, &mut Uninterrupted).expect("create");
     session.lock().expect("lock");
 
     // The same root, which already holds the identity this package carries.
-    let restored =
-        backup::restore(&root, &mut package, PASSWORD, &mut Uninterrupted).expect("restore");
-    assert_eq!(restored.vault_id, source_vault_id);
-    assert_eq!(root.registry_names().unwrap().len(), 2);
+    assert_eq!(
+        rejection(backup::restore(
+            &root,
+            &mut package,
+            PASSWORD,
+            &mut Uninterrupted,
+        )),
+        ChurStatus::Conflict
+    );
+    assert_eq!(root.registry_names().unwrap().len(), 1);
+    assert_eq!(
+        rejection(backup::restore(
+            &root,
+            &mut package,
+            phrase.as_bytes(),
+            &mut Uninterrupted,
+        )),
+        ChurStatus::Conflict
+    );
+    assert_eq!(root.registry_names().unwrap().len(), 1);
 
     // The source directory is untouched and still opens its own objects.
     assert!(
@@ -1819,4 +1838,31 @@ fn a_container_changed_after_its_check_installs_nothing() {
     );
     assert!(source.seen, "the changed byte was read");
     assert!(destination.registry_names().unwrap().is_empty());
+}
+
+/// A package of a different vault whose password already opens an installed
+/// identity is refused, so unlock never has two identities for one password.
+#[test]
+fn a_restore_under_a_password_an_installed_identity_opens_is_refused() {
+    let (_other, mut session) = new_vault();
+    let mut package = Cursor::new(Vec::new());
+    backup::create(&mut session, &mut package, NOW, &mut Uninterrupted).expect("create");
+    session.lock().expect("lock");
+
+    let (root, mut installed) = new_vault();
+    let installed_id = installed.vault_id();
+    installed.lock().expect("lock");
+
+    assert_eq!(
+        rejection(backup::restore(
+            &root,
+            &mut package,
+            PASSWORD,
+            &mut Uninterrupted,
+        )),
+        ChurStatus::Conflict
+    );
+    assert_eq!(root.registry_names().unwrap().len(), 1);
+    let reopened = vault::unlock_with_password(&root, PASSWORD, NOW + 1).expect("unlock");
+    assert_eq!(reopened.vault_id(), installed_id);
 }

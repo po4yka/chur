@@ -106,11 +106,16 @@ class GuideTest {
         assertNull(guide.session.value)
     }
     @Test fun public_pet_tour_has_no_private_steps() {
-        val guide = GuideCoordinator()
+        var saved: String? = "1:complete"
+        val guide = GuideCoordinator(GuideStore({ saved }, { saved = it }))
+        guide.startPet()
+        guide.stop()
+        assertEquals("1:complete", saved)
         guide.startPet()
         assertTrue(guide.session.value!!.publicOnly)
         assertEquals(GuideCoordinator.petSteps, guide.session.value!!.steps)
         repeat(GuideCoordinator.petSteps.size) { guide.skip() }
         assertNull(guide.session.value)
+        assertEquals("1:complete", saved)
     }
 }

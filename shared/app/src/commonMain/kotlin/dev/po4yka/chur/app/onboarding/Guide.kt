@@ -70,11 +70,17 @@ class GuideCoordinator(private val store: GuideStore = GuideStore(), freshInstal
         if (current.token == token && current.step == step) advance()
     }
     fun skip() = advance()
-    fun stop() { mutable.value = null; serial++; runCatching { store.record("skipped") } }
+    // Public lessons are not the private tutorial; they never rewrite its stored status.
+    private fun finish(status: String) {
+        val public = mutable.value?.publicOnly == true
+        mutable.value = null; serial++
+        if (!public) runCatching { store.record(status) }
+    }
+    fun stop() = finish("skipped")
     fun conceal() { mutable.value = null; serial++ }
     fun complete() {
         if (mutable.value?.publicOnly == false && offerPetLesson) petLessonPending = true
-        mutable.value = null; serial++; runCatching { store.record("complete") }
+        finish("complete")
     }
     fun verifiedEntry() { if (offerPetLesson) petLessonPending = true; complete() }
     fun showPendingPetLesson() { if (petLessonPending) { petLessonPending = false; startPet() } }

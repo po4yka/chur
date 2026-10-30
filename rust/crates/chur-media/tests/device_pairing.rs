@@ -811,6 +811,193 @@ fn a_concurrent_ready_before_genesis_revocation_preserves_history_and_other_devi
         device_pairing::current_checkpoint(neighbor.catalog().unwrap(), &secret, vault_id, NOW + 7)
             .is_ok()
     );
+    // The neighbor still holds Ready above the zero cutoff, and its approval names it.
+    // Delivery never returns that operation, and its head creates no floor, so a device
+    // it approves finalizes without the prefix.
+    let late_root = root();
+    backup::restore(
+        &late_root,
+        &mut Cursor::new(backup_bytes.get_ref().clone()),
+        PASSWORD,
+        &mut Uninterrupted,
+    )
+    .unwrap();
+    let mut late = vault::unlock_with_password(&late_root, PASSWORD, NOW + 1).unwrap();
+    let late_request =
+        device_pairing::prepare_request(late.catalog().unwrap(), &secret, vault_id).unwrap();
+    let late_approval = device_pairing::approve(
+        neighbor.catalog().unwrap(),
+        &secret,
+        vault_id,
+        &late_request,
+        NOW + 8,
+    )
+    .unwrap();
+    let credentials = device_pairing::accept_start(
+        late.catalog().unwrap(),
+        &secret,
+        vault_id,
+        &late_approval.approval,
+    )
+    .unwrap();
+    assert!(
+        chur_sync_protocol::checkpoint::Checkpoint::decode(&credentials.checkpoint)
+            .unwrap()
+            .heads()
+            .iter()
+            .any(|head| head.device_id() == target_request.device_id())
+    );
+    for (db, device) in [
+        (source.catalog_ref().unwrap(), *original.device_id()),
+        (
+            neighbor.catalog_ref().unwrap(),
+            *neighbor_request.device_id(),
+        ),
+    ] {
+        receive_device(db, &device, &mut late, &late_root, &secret, vault_id);
+    }
+    device_pairing::finalize(late.catalog().unwrap(), &secret, vault_id, NOW + 9).unwrap();
+}
+
+#[test]
+fn a_restored_device_pairs_when_the_log_holds_a_revoked_head_its_cutoff_pins() {
+    restored_device_pairs_past_a_pinned_revoked_head(false);
+}
+
+/// The backup predates the revocation, so the restored membership still lists the
+/// revoked device as active while the approver's authority has revoked it.
+#[test]
+fn a_restored_device_pairs_when_its_stale_membership_still_lists_the_pinned_revoked_device() {
+    restored_device_pairs_past_a_pinned_revoked_head(true);
+}
+
+fn restored_device_pairs_past_a_pinned_revoked_head(backup_before_revocation: bool) {
+    let source_root = root();
+    let mut source = vault::create(&source_root, PASSWORD, NOW)
+        .unwrap()
+        .activate()
+        .unwrap();
+    let secret = source.root_secret().unwrap().duplicate();
+    let vault_id = source.vault_id();
+    let (original, _) =
+        sync_receive::provision_local_identity(source.catalog().unwrap(), &secret, vault_id)
+            .unwrap();
+    let mut first_backup = Cursor::new(Vec::new());
+    backup::create(&mut source, &mut first_backup, NOW, &mut Uninterrupted).unwrap();
+    let revoked_root = root();
+    backup::restore(
+        &revoked_root,
+        &mut Cursor::new(first_backup.into_inner()),
+        PASSWORD,
+        &mut Uninterrupted,
+    )
+    .unwrap();
+    let mut revoked = vault::unlock_with_password(&revoked_root, PASSWORD, NOW + 1).unwrap();
+    let revoked_request =
+        device_pairing::prepare_request(revoked.catalog().unwrap(), &secret, vault_id).unwrap();
+    let approval = device_pairing::approve(
+        source.catalog().unwrap(),
+        &secret,
+        vault_id,
+        &revoked_request,
+        NOW + 2,
+    )
+    .unwrap();
+    device_pairing::accept_start(
+        revoked.catalog().unwrap(),
+        &secret,
+        vault_id,
+        &approval.approval,
+    )
+    .unwrap();
+    receive_device(
+        source.catalog_ref().unwrap(),
+        original.device_id(),
+        &mut revoked,
+        &revoked_root,
+        &secret,
+        vault_id,
+    );
+    device_pairing::finalize(revoked.catalog().unwrap(), &secret, vault_id, NOW + 3).unwrap();
+    // The source accepts the new device's Ready before it revokes the device,
+    // so the signed cutoff covers that head.
+    receive_device(
+        revoked.catalog_ref().unwrap(),
+        revoked_request.device_id(),
+        &mut source,
+        &source_root,
+        &secret,
+        vault_id,
+    );
+    let mut second_backup = Cursor::new(Vec::new());
+    if backup_before_revocation {
+        backup::create(&mut source, &mut second_backup, NOW + 4, &mut Uninterrupted).unwrap();
+    }
+    let revocation = device_pairing::prepare_revoke(
+        source.catalog().unwrap(),
+        &secret,
+        vault_id,
+        *revoked_request.device_id(),
+        NOW + 5,
+    )
+    .unwrap();
+    assert_eq!(
+        chur_sync_protocol::membership::RevocationRecord::decode(&revocation.revocation)
+            .unwrap()
+            .final_accepted_device_sequence(),
+        1
+    );
+
+    if !backup_before_revocation {
+        backup::create(&mut source, &mut second_backup, NOW + 6, &mut Uninterrupted).unwrap();
+    }
+    let restored_root = root();
+    backup::restore(
+        &restored_root,
+        &mut Cursor::new(second_backup.into_inner()),
+        PASSWORD,
+        &mut Uninterrupted,
+    )
+    .unwrap();
+    let mut restored = vault::unlock_with_password(&restored_root, PASSWORD, NOW + 7).unwrap();
+    let restored_request =
+        device_pairing::prepare_request(restored.catalog().unwrap(), &secret, vault_id).unwrap();
+    let approval = device_pairing::approve(
+        source.catalog().unwrap(),
+        &secret,
+        vault_id,
+        &restored_request,
+        NOW + 8,
+    )
+    .unwrap();
+    // The restored log still holds the revoked head; the approver's checkpoint
+    // leaves it out because the cutoff pins it.
+    let credentials = device_pairing::accept_start(
+        restored.catalog().unwrap(),
+        &secret,
+        vault_id,
+        &approval.approval,
+    )
+    .expect("a pinned revoked head needs no mention in the approver's checkpoint");
+    assert!(
+        !chur_sync_protocol::checkpoint::Checkpoint::decode(&credentials.checkpoint)
+            .unwrap()
+            .heads()
+            .iter()
+            .any(|head| head.device_id() == revoked_request.device_id())
+    );
+    receive_device(
+        source.catalog_ref().unwrap(),
+        original.device_id(),
+        &mut restored,
+        &restored_root,
+        &secret,
+        vault_id,
+    );
+    assert_eq!(
+        device_pairing::finalize(restored.catalog().unwrap(), &secret, vault_id, NOW + 9).unwrap(),
+        *restored_request.device_id()
+    );
 }
 
 /// A source device S, a device T paired after the backup, and a restored device R

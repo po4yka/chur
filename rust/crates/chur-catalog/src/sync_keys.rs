@@ -164,7 +164,7 @@ pub fn prepare_backup_identity(
     let mut log = crate::sync_log::load(snapshot, membership)?;
     let portable = if stored.is_recovery_only() {
         ensure!(
-            log.own_checkpoint_covers_current_heads(snapshot)?,
+            log.own_checkpoint_covers_current_heads(snapshot, membership)?,
             VaultIncomplete,
             "the recovered sync identity has no current own checkpoint"
         );

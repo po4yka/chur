@@ -89,7 +89,7 @@ fn production_local_identity_backs_up_and_restores_without_replacing_the_live_si
     assert!(
         !sync_log::load(session.catalog_ref().unwrap(), &membership)
             .unwrap()
-            .own_checkpoint_covers_current_heads(session.catalog_ref().unwrap())
+            .own_checkpoint_covers_current_heads(session.catalog_ref().unwrap(), &membership)
             .unwrap(),
         "backup checkpoint belongs only to the snapshot"
     );
@@ -111,7 +111,7 @@ fn production_local_identity_backs_up_and_restores_without_replacing_the_live_si
     assert_eq!(envelope.device_id(), enrollment.device_id());
     let log = sync_log::load(restored.catalog_ref().unwrap(), &membership).unwrap();
     assert!(
-        log.own_checkpoint_covers_current_heads(restored.catalog_ref().unwrap())
+        log.own_checkpoint_covers_current_heads(restored.catalog_ref().unwrap(), &membership)
             .unwrap()
     );
     assert_eq!(log.floor(&device_id), log.head(&device_id));

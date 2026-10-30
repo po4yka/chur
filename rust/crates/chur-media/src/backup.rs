@@ -1065,7 +1065,7 @@ fn restore_inner(
                     chur_core::err!(VaultCorrupt, "the backup operation log is invalid")
                 })?;
                 ensure!(
-                    log.own_checkpoint_covers_current_heads(&catalog)
+                    log.own_checkpoint_covers_current_heads(&catalog, &membership)
                         .map_err(|_| {
                             chur_core::err!(VaultCorrupt, "the backup checkpoint is invalid")
                         })?,

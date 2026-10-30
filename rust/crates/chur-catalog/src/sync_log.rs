@@ -51,8 +51,43 @@ impl DurableOperationLog {
         self.log.latest_operations().map_err(corrupt_log)
     }
 
-    /// Whether the latest own checkpoint covers every current accepted head.
-    pub fn own_checkpoint_covers_current_heads(&self, db: &CatalogDb) -> Result<bool> {
+    /// Accepted heads an own checkpoint names, at most `CHECKPOINT_HEADS_MAX`.
+    ///
+    /// Every active device's head comes first; `OPERATION_LOG.md` section 4.2 caps active devices at the same bound. A revoked device stops counting against that cap and its signed cutoff pins its chain up to that point, so a head at or behind the cutoff is always left out. A head above the cutoff, accepted concurrently with the revocation, is a retained historical claim that creates no floor (`ROLLBACK_PROTECTION.md` section 6). Such heads fill the slots the active heads leave free in ascending `device_id` order, and the rest are dropped, so issuing never fails because of revoked devices.
+    fn checkpoint_heads(&self, membership: &MembershipState) -> Result<BTreeMap<Id, CausalStamp>> {
+        let mut latest = self.latest_operations()?;
+        latest.retain(|device_id, operation| {
+            !pinned_by_revocation(
+                membership,
+                device_id,
+                operation.device_sequence(),
+                operation.digest(),
+            )
+        });
+        let active = latest
+            .keys()
+            .filter(|device_id| membership.is_active(device_id))
+            .count();
+        let mut room = bounds::CHECKPOINT_HEADS_MAX.saturating_sub(active);
+        // `retain` visits keys in ascending order, so the lowest revoked ids win the free slots.
+        latest.retain(|device_id, _| {
+            membership.is_active(device_id) || {
+                let kept = room > 0;
+                room = room.saturating_sub(1);
+                kept
+            }
+        });
+        Ok(latest)
+    }
+
+    /// Whether the latest own checkpoint names exactly the heads `issue_own_checkpoint` would name now.
+    ///
+    /// A head that a revocation cutoff pins is ignored on the stored side, because earlier versions named it. A changed set reads as not covered, so the caller issues again.
+    pub fn own_checkpoint_covers_current_heads(
+        &self,
+        db: &CatalogDb,
+        membership: &MembershipState,
+    ) -> Result<bool> {
         let row: Option<(Vec<u8>, Vec<u8>)> = db
             .connection()
             .query_row(
@@ -79,10 +114,23 @@ impl DurableOperationLog {
             CatalogCorrupt,
             "the own checkpoint contradicts its catalog row"
         );
-        let latest = self.latest_operations()?;
-        Ok(checkpoint.heads().len() == latest.len()
-            && checkpoint.heads().iter().all(|head| {
-                latest.get(head.device_id()).is_some_and(|operation| {
+        let latest = self.checkpoint_heads(membership)?;
+        let named: BTreeMap<&Id, _> = checkpoint
+            .heads()
+            .iter()
+            .filter(|head| {
+                !pinned_by_revocation(
+                    membership,
+                    head.device_id(),
+                    head.device_sequence(),
+                    head.operation_digest(),
+                )
+            })
+            .map(|head| (head.device_id(), head))
+            .collect();
+        Ok(named.len() == latest.len()
+            && latest.iter().all(|(device_id, operation)| {
+                named.get(device_id).is_some_and(|head| {
                     operation.device_sequence() == head.device_sequence()
                         && operation.digest() == head.operation_digest()
                 })
@@ -110,7 +158,7 @@ impl DurableOperationLog {
             AuthenticationFailed,
             "checkpoint key is not the current active device key"
         );
-        let latest = self.latest_operations()?;
+        let latest = self.checkpoint_heads(membership)?;
         let issuer = latest.get(issuer_device_id).ok_or_else(|| {
             Error::new(
                 ChurStatus::InvalidInput,
@@ -378,13 +426,13 @@ impl DurableOperationLog {
         match self.log.accept_checkpoint(checkpoint, membership) {
             Ok(outcome) => {
                 if let Some((existing, _)) = existing.as_ref()
-                    && !checkpoint_covers(checkpoint, existing)
+                    && !checkpoint_covers(checkpoint, existing, membership)
                 {
                     // Protocol floor comparison can accept an older replay
                     // without raising a floor. Keep its newer signed evidence.
                     *self = load(db, membership)?;
                     ensure!(
-                        checkpoint_covers(existing, checkpoint),
+                        checkpoint_covers(existing, checkpoint, membership),
                         SyncHeadRollback,
                         "checkpoint discards previously trusted head evidence"
                     );
@@ -987,14 +1035,54 @@ fn restore_and_validate_heads(
     Ok(())
 }
 
-fn checkpoint_covers(candidate: &Checkpoint, baseline: &Checkpoint) -> bool {
+/// Whether a revoked device's signed cutoff already pins this head, so a checkpoint never names it.
+///
+/// The cutoff names the highest accepted sequence and digest on the pinned branch. A head below it is pinned without a digest comparison: fork detection below the cutoff relies on pinned-chain acceptance (`OperationLog` `head_matches` and `check_history`), not on checkpoints. A head at the cutoff with another digest is a fork and stays named. A head above it is history accepted concurrently with the revocation.
+fn pinned_by_revocation(
+    membership: &MembershipState,
+    device_id: &Id,
+    sequence: u64,
+    digest: &Commitment,
+) -> bool {
+    matches!(
+        membership.device(device_id).map(|device| device.status()),
+        Some(DeviceStatus::Revoked { sequence: cutoff, digest: cutoff_digest })
+            if sequence < cutoff || (sequence == cutoff && digest == &cutoff_digest)
+    )
+}
+
+/// Whether the device is revoked and `sequence` lies above its signed cutoff.
+///
+/// Ordinary delivery never returns such an operation and a receiver rejects it, so no one can hold the prefix up to it, and a checkpoint head there creates no floor.
+pub(crate) fn above_revocation_cutoff(
+    membership: &MembershipState,
+    device_id: &Id,
+    sequence: u64,
+) -> bool {
+    matches!(
+        membership.device(device_id).map(|device| device.status()),
+        Some(DeviceStatus::Revoked { sequence: cutoff, .. }) if sequence > cutoff
+    )
+}
+
+/// Whether `candidate` names every head of `baseline` at the same or a later point.
+///
+/// A baseline head of a device that is not active need not reappear. At or behind its cutoff the signed cutoff pins it; above the cutoff it creates no floor, and `checkpoint_heads` may drop it under the head limit.
+pub(crate) fn checkpoint_covers(
+    candidate: &Checkpoint,
+    baseline: &Checkpoint,
+    membership: &MembershipState,
+) -> bool {
     baseline.heads().iter().all(|head| {
-        candidate.heads().iter().any(|current| {
-            current.device_id() == head.device_id()
-                && (current.device_sequence() > head.device_sequence()
-                    || (current.device_sequence() == head.device_sequence()
-                        && current.operation_digest() == head.operation_digest()))
-        })
+        membership
+            .device(head.device_id())
+            .is_some_and(|device| device.status() != DeviceStatus::Active)
+            || candidate.heads().iter().any(|current| {
+                current.device_id() == head.device_id()
+                    && (current.device_sequence() > head.device_sequence()
+                        || (current.device_sequence() == head.device_sequence()
+                            && current.operation_digest() == head.operation_digest()))
+            })
     })
 }
 
@@ -1284,13 +1372,27 @@ mod tests {
         digest: Commitment,
         membership: &MembershipState,
     ) -> Checkpoint {
+        checkpoint_of(
+            key,
+            sequence,
+            vec![CheckpointHead::new(id(3), sequence, digest)],
+            membership,
+        )
+    }
+
+    fn checkpoint_of(
+        key: &DeviceSigningKey,
+        sequence: u64,
+        heads: Vec<CheckpointHead>,
+        membership: &MembershipState,
+    ) -> Checkpoint {
         Checkpoint::new(
             id(1),
             id(3),
             sequence,
             membership.generation(),
             *membership.commitment(),
-            vec![CheckpointHead::new(id(3), sequence, digest)],
+            heads,
             [6; 32],
             [0; 32],
         )
@@ -1607,14 +1709,14 @@ mod tests {
         log.accept_with(&mut db, &first, &membership, |_| Ok(()))
             .expect("first");
         assert!(
-            !log.own_checkpoint_covers_current_heads(&db)
+            !log.own_checkpoint_covers_current_heads(&db, &membership)
                 .expect("no checkpoint")
         );
         let current = checkpoint(&key, 1, first.digest(), &membership);
         log.accept_checkpoint(&mut db, &current, &membership, true, 9)
             .expect("current checkpoint");
         assert!(
-            log.own_checkpoint_covers_current_heads(&db)
+            log.own_checkpoint_covers_current_heads(&db, &membership)
                 .expect("covered")
         );
 
@@ -1622,7 +1724,7 @@ mod tests {
         log.accept_with(&mut db, &second, &membership, |_| Ok(()))
             .expect("second");
         assert!(
-            !log.own_checkpoint_covers_current_heads(&db)
+            !log.own_checkpoint_covers_current_heads(&db, &membership)
                 .expect("stale checkpoint")
         );
     }
@@ -1672,7 +1774,7 @@ mod tests {
         assert_eq!(checkpoint.heads().len(), 1);
         assert_eq!(checkpoint.heads()[0].operation_digest(), &first.digest());
         assert!(
-            log.own_checkpoint_covers_current_heads(&db)
+            log.own_checkpoint_covers_current_heads(&db, &membership)
                 .expect("coverage")
         );
     }
@@ -1720,5 +1822,312 @@ mod tests {
         assert_eq!(accepted_record, accepted.encode());
         assert_eq!(conflicting_record, conflict.encode());
         assert!(load(&db, &membership).is_ok());
+    }
+
+    fn enroll_second_device(
+        db: &mut CatalogDb,
+        membership: &MembershipState,
+        key: &DeviceSigningKey,
+        second_key: &DeviceSigningKey,
+    ) -> EnrollmentRecord {
+        let enrollment = EnrollmentRecord::new(
+            id(1),
+            id(6),
+            second_key.verifying_key(),
+            [4; 32],
+            2,
+            id(3),
+            2,
+            *membership.commitment(),
+            [8; 32],
+        )
+        .expect("enrollment")
+        .sign(key);
+        sync_membership::accept_enrollment(db, &enrollment, &id(3), 2).expect("accept enrollment");
+        enrollment
+    }
+
+    #[test]
+    fn own_checkpoint_leaves_out_the_head_of_a_revoked_device() {
+        let (mut db, membership, key) = setup();
+        let revoked_key = DeviceSigningKey::from_seed([7; 32]);
+        let enrollment = enroll_second_device(&mut db, &membership, &key, &revoked_key);
+        let revoked_first = operation_from(id(6), &revoked_key, 1, [0; 32], 20);
+        let revocation = RevocationRecord::new(
+            id(1),
+            id(6),
+            1,
+            revoked_first.digest(),
+            3,
+            id(3),
+            enrollment.commitment(),
+        )
+        .expect("revocation")
+        .sign(&key);
+        let membership = sync_membership::accept_revocation(&mut db, &revocation, &id(3))
+            .expect("accept revocation");
+        let mut log = load(&db, &membership).expect("log");
+        let first = operation(&key, 1, [0; 32], 5);
+        for record in [&revoked_first, &first] {
+            log.accept_with(&mut db, record, &membership, |_| Ok(()))
+                .expect("accepted");
+        }
+        assert_eq!(log.latest_operations().expect("latest").len(), 2);
+
+        let checkpoint = log
+            .issue_own_checkpoint(&mut db, &membership, &id(3), &key, 10)
+            .expect("checkpoint");
+        assert_eq!(checkpoint.heads().len(), 1);
+        assert_eq!(checkpoint.heads()[0].device_id(), &id(3));
+        assert!(
+            log.own_checkpoint_covers_current_heads(&db, &membership)
+                .expect("coverage")
+        );
+    }
+
+    #[test]
+    fn a_checkpoint_naming_a_later_revoked_device_still_covers_the_active_heads() {
+        let (mut db, membership, key) = setup();
+        let revoked_key = DeviceSigningKey::from_seed([7; 32]);
+        let enrollment = enroll_second_device(&mut db, &membership, &key, &revoked_key);
+        let membership = sync_membership::load(&db)
+            .expect("load")
+            .expect("membership");
+        let mut log = load(&db, &membership).expect("log");
+        let revoked_first = operation_from(id(6), &revoked_key, 1, [0; 32], 20);
+        let first = operation(&key, 1, [0; 32], 5);
+        for record in [&revoked_first, &first] {
+            log.accept_with(&mut db, record, &membership, |_| Ok(()))
+                .expect("accepted");
+        }
+        let checkpoint = log
+            .issue_own_checkpoint(&mut db, &membership, &id(3), &key, 10)
+            .expect("checkpoint");
+        assert_eq!(checkpoint.heads().len(), 2);
+        let revocation = RevocationRecord::new(
+            id(1),
+            id(6),
+            1,
+            revoked_first.digest(),
+            3,
+            id(3),
+            enrollment.commitment(),
+        )
+        .expect("revocation")
+        .sign(&key);
+        let membership = sync_membership::accept_revocation(&mut db, &revocation, &id(3))
+            .expect("accept revocation");
+        assert!(
+            log.own_checkpoint_covers_current_heads(&db, &membership)
+                .expect("coverage")
+        );
+    }
+
+    /// Enrolls device `byte` through the issuer `id(3)`; its signing seed is `byte`.
+    fn enroll_device(
+        db: &mut CatalogDb,
+        membership: &MembershipState,
+        key: &DeviceSigningKey,
+        byte: u8,
+    ) -> (MembershipState, DeviceSigningKey) {
+        let device_key = DeviceSigningKey::from_seed([byte; 32]);
+        let generation = membership.generation() + 1;
+        let enrollment = EnrollmentRecord::new(
+            id(1),
+            id(byte),
+            device_key.verifying_key(),
+            [4; 32],
+            generation,
+            id(3),
+            generation,
+            *membership.commitment(),
+            [8; 32],
+        )
+        .expect("enrollment")
+        .sign(key);
+        let membership = sync_membership::accept_enrollment(db, &enrollment, &id(3), generation)
+            .expect("accept enrollment");
+        (membership, device_key)
+    }
+
+    fn revoke_device(
+        db: &mut CatalogDb,
+        membership: &MembershipState,
+        key: &DeviceSigningKey,
+        byte: u8,
+        cutoff: (u64, Commitment),
+    ) -> MembershipState {
+        let revocation = RevocationRecord::new(
+            id(1),
+            id(byte),
+            cutoff.0,
+            cutoff.1,
+            membership.generation() + 1,
+            id(3),
+            *membership.commitment(),
+        )
+        .expect("revocation")
+        .sign(key);
+        sync_membership::accept_revocation(db, &revocation, &id(3)).expect("accept revocation")
+    }
+
+    /// Enrolls device `byte`, accepts `chain` operations it authored, and returns their records.
+    fn author_chain(
+        db: &mut CatalogDb,
+        log: &mut DurableOperationLog,
+        membership: &mut MembershipState,
+        key: &DeviceSigningKey,
+        byte: u8,
+        chain: u8,
+    ) -> Vec<Operation> {
+        let (enrolled, device_key) = enroll_device(db, membership, key, byte);
+        *membership = enrolled;
+        let mut records: Vec<Operation> = Vec::new();
+        for sequence in 1..=chain {
+            let previous = records.last().map_or([0; 32], Operation::digest);
+            let record = operation_from(
+                id(byte),
+                &device_key,
+                u64::from(sequence),
+                previous,
+                byte.wrapping_add((sequence - 1).wrapping_mul(128)),
+            );
+            log.accept_with(db, &record, membership, |_| Ok(()))
+                .expect("accepted");
+            records.push(record);
+        }
+        records
+    }
+
+    #[test]
+    fn a_revoked_head_is_named_only_when_its_cutoff_does_not_pin_it() {
+        // (revoked head sequence, cutoff sequence, cutoff digest differs, named)
+        let cases = [
+            ("behind the cutoff", 1, 2, false, false),
+            ("at the cutoff with its digest", 1, 1, false, false),
+            ("at the cutoff with another digest", 1, 1, true, true),
+            ("above the cutoff", 2, 1, false, true),
+        ];
+        for (label, head, cutoff, forked, named) in cases {
+            let (mut db, membership, key) = setup();
+            let mut membership = membership;
+            let mut log = load(&db, &membership).expect("log");
+            let first = operation(&key, 1, [0; 32], 5);
+            log.accept_with(&mut db, &first, &membership, |_| Ok(()))
+                .expect("issuer head");
+            let chain = author_chain(
+                &mut db,
+                &mut log,
+                &mut membership,
+                &key,
+                6,
+                u8::try_from(head).expect("small"),
+            );
+            let before = log
+                .issue_own_checkpoint(&mut db, &membership, &id(3), &key, 10)
+                .expect("checkpoint while active");
+            assert_eq!(before.heads().len(), 2, "{label}: active devices are named");
+            let digest = if forked {
+                [0xAA; 32]
+            } else if cutoff <= head {
+                chain[usize::try_from(cutoff).expect("small") - 1].digest()
+            } else {
+                [0xBB; 32]
+            };
+            let after = revoke_device(&mut db, &membership, &key, 6, (cutoff, digest));
+            let issued = log
+                .issue_own_checkpoint(&mut db, &after, &id(3), &key, 11)
+                .expect("checkpoint after revocation");
+            assert_eq!(
+                issued.heads().iter().any(|head| head.device_id() == &id(6)),
+                named,
+                "{label}: issued heads"
+            );
+            assert!(
+                log.own_checkpoint_covers_current_heads(&db, &after)
+                    .expect("coverage"),
+                "{label}: the issued checkpoint covers the current heads"
+            );
+            // A checkpoint that leaves the revoked head out covers one that names it.
+            let only_issuer = checkpoint_of(
+                &key,
+                1,
+                vec![CheckpointHead::new(id(3), 1, first.digest())],
+                &after,
+            );
+            assert!(
+                checkpoint_covers(&only_issuer, &before, &after),
+                "{label}: a revoked baseline head is optional"
+            );
+            assert!(
+                !checkpoint_covers(&only_issuer, &before, &membership),
+                "{label}: an active baseline head is required"
+            );
+        }
+    }
+
+    #[test]
+    fn issuing_succeeds_when_more_than_thirty_two_devices_have_authored() {
+        let (mut db, mut membership, key) = setup();
+        let mut log = load(&db, &membership).expect("log");
+        let first = operation(&key, 1, [0; 32], 5);
+        log.accept_with(&mut db, &first, &membership, |_| Ok(()))
+            .expect("issuer head");
+        for byte in 40..80 {
+            let chain = author_chain(&mut db, &mut log, &mut membership, &key, byte, 1);
+            membership = revoke_device(&mut db, &membership, &key, byte, (1, chain[0].digest()));
+        }
+        assert_eq!(log.latest_operations().expect("latest").len(), 41);
+        let checkpoint = log
+            .issue_own_checkpoint(&mut db, &membership, &id(3), &key, 10)
+            .expect("revoked devices do not count against the head limit");
+        assert_eq!(checkpoint.heads().len(), 1);
+        assert!(
+            log.own_checkpoint_covers_current_heads(&db, &membership)
+                .expect("coverage")
+        );
+    }
+
+    #[test]
+    fn unpinned_revoked_heads_fill_only_the_slots_active_heads_leave_free() {
+        let (mut db, mut membership, key) = setup();
+        let mut log = load(&db, &membership).expect("log");
+        let first = operation(&key, 1, [0; 32], 5);
+        log.accept_with(&mut db, &first, &membership, |_| Ok(()))
+            .expect("issuer head");
+        for byte in 100..109 {
+            author_chain(&mut db, &mut log, &mut membership, &key, byte, 1);
+        }
+        // Each revoked device has a head above its cutoff, so none is pinned.
+        for byte in 40..65 {
+            let chain = author_chain(&mut db, &mut log, &mut membership, &key, byte, 2);
+            membership = revoke_device(&mut db, &membership, &key, byte, (1, chain[0].digest()));
+        }
+        assert_eq!(log.latest_operations().expect("latest").len(), 35);
+        let checkpoint = log
+            .issue_own_checkpoint(&mut db, &membership, &id(3), &key, 10)
+            .expect("overflowing revoked heads are dropped, not fatal");
+        let named: Vec<Id> = checkpoint
+            .heads()
+            .iter()
+            .map(|head| *head.device_id())
+            .collect();
+        assert_eq!(named.len(), bounds::CHECKPOINT_HEADS_MAX);
+        let expected: Vec<Id> = (40..62)
+            .chain(100..109)
+            .chain([3])
+            .map(id)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        assert_eq!(
+            named, expected,
+            "ten active heads and the 22 lowest revoked ids"
+        );
+        assert!(
+            log.own_checkpoint_covers_current_heads(&db, &membership)
+                .expect("coverage"),
+            "the dropped heads do not read as a changed set"
+        );
     }
 }

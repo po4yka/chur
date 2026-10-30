@@ -523,6 +523,11 @@ pub fn accept_start(
     if previous.is_none() {
         let log = sync_log::load(db, &current)?;
         for device in sync_log::device_ids(db)? {
+            // A revoked device's signed cutoff pins its history, and the approver's checkpoint need not name it.
+            // The approver's authority may revoke a device that a stale restored membership still lists.
+            if !current.is_active(&device) || !authority.is_active(&device) {
+                continue;
+            }
             for trusted in [log.head(&device), log.floor(&device)]
                 .into_iter()
                 .flatten()
@@ -761,6 +766,11 @@ pub fn finalize(db: &mut CatalogDb, root: &Key, vault: Id, now_ms: u64) -> Resul
         "downloaded pairing enrollment differs"
     );
     for head in checkpoint.heads() {
+        // Delivery never returns an operation above a revocation cutoff, and its head creates no floor.
+        if sync_log::above_revocation_cutoff(&membership, head.device_id(), head.device_sequence())
+        {
+            continue;
+        }
         let record = sync_log::record_at(db, head.device_id(), head.device_sequence())?
             .ok_or_else(|| {
                 Error::new(
@@ -787,11 +797,11 @@ pub fn finalize(db: &mut CatalogDb, root: &Key, vault: Id, now_ms: u64) -> Resul
         .map_err(|error| map_sqlite(error, "pairing checkpoint evidence could not be read"))?;
     let checkpoint = if let Some(existing) = existing {
         let existing = Checkpoint::decode(&existing)?;
-        if checkpoint_covers(&existing, &checkpoint) {
+        if sync_log::checkpoint_covers(&existing, &checkpoint, &membership) {
             existing
         } else {
             ensure!(
-                checkpoint_covers(&checkpoint, &existing),
+                sync_log::checkpoint_covers(&checkpoint, &existing, &membership),
                 SyncHeadRollback,
                 "pairing checkpoint conflicts with newer evidence"
             );
@@ -844,17 +854,6 @@ pub fn finalize(db: &mut CatalogDb, root: &Key, vault: Id, now_ms: u64) -> Resul
         Ok(())
     })? == ApplyOutcome::Applied, InternalFailure, "fresh pairing identity was not installed");
     Ok(*request.device_id())
-}
-
-fn checkpoint_covers(candidate: &Checkpoint, baseline: &Checkpoint) -> bool {
-    baseline.heads().iter().all(|head| {
-        candidate.heads().iter().any(|current| {
-            current.device_id() == head.device_id()
-                && (current.device_sequence() > head.device_sequence()
-                    || (current.device_sequence() == head.device_sequence()
-                        && current.operation_digest() == head.operation_digest()))
-        })
-    })
 }
 
 fn local_membership(db: &CatalogDb, vault: Id) -> Result<MembershipState> {

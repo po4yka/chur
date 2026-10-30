@@ -313,7 +313,7 @@ pub fn gc_candidates(
         now_ms,
         &active_devices,
         &latest_operations,
-        log.own_checkpoint_covers_current_heads(db)?,
+        log.own_checkpoint_covers_current_heads(db, membership)?,
     ))
 }
 

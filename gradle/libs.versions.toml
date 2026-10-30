@@ -10,8 +10,8 @@ filament = "1.77.3"
 # Toolchain
 jdk = "21"
 kotlin = "2.4.21"
-agp = "9.4.1"
-composeMultiplatform = "1.12.1"
+agp = "9.5.0"
+composeMultiplatform = "1.12.2"
 # Compose Multiplatform Material 3 ships on its own version line, not the
 # release-train number above.
 composeMaterial3 = "1.9.0"
@@ -32,7 +32,7 @@ ndk = "30.0.16248370"
 iosDeploymentTarget = "18.0"
 
 # Libraries
-kotlinxSerialization = "1.11.0"
+kotlinxSerialization = "1.12.0"
 kotlinxCoroutines = "1.11.0"
 androidxCoreKtx = "1.19.1"
 androidxActivityCompose = "1.13.0"

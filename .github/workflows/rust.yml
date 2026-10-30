@@ -540,6 +540,11 @@ jobs:
           xcodebuild -project apps/iosApp/Chur.xcodeproj -scheme Chur
           -configuration Debug -destination 'generic/platform=iOS Simulator'
           CODE_SIGNING_ALLOWED=NO build
+      # Kotlin/C++ spirit motion parity. The build above staged the Filament headers.
+      - name: check Kotlin and C++ spirit motion parity
+        run: |
+          command -v kotlinc >/dev/null || brew install kotlin
+          python3 tests/spirit/check-native-parity.py
       - name: save the build cache from main
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

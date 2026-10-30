@@ -77,7 +77,7 @@ parity or physical-device acceptance.
 
 Commands:
 
-- `KOTLIN_COMPILER_LIB=/path/to/kotlin/lib python3 tests/spirit/check-native-parity.py`
+- `python3 tests/spirit/check-native-parity.py` (needs `kotlinc` on `PATH` or `KOTLIN_COMPILER_LIB`, a C++ compiler, and the Filament headers from `apps/iosApp/SpiritRenderer/prepare-filament.sh`). The `kotlin-native` CI job runs it after the iOS build.
 - `./gradlew -I tests/spirit/verify-dependencies.gradle :shared:app:verifySpiritDependencies :apps:androidApp:verifySpiritDependencies`
 - Standard project builds/tests from `DEVELOPMENT.md`; Apple setup in `apps/iosApp/SpiritRenderer/README.md`.
 

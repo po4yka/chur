@@ -1,5 +1,8 @@
 package dev.po4yka.chur.app.publicshell
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -22,12 +25,14 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import dev.po4yka.chur.app.spirit.*
 import dev.po4yka.chur.app.onboarding.*
 import dev.po4yka.chur.app.theme.LocalChurMotion
 import dev.po4yka.chur.app.theme.SettingsGlyph
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,7 +52,9 @@ fun PetScreen(onOpenSettings: () -> Unit, onSubmitCode: (String) -> Boolean,
     var treatSerial by remember { mutableIntStateOf(0) }
     var enteringCode by remember(inputEpoch) { mutableStateOf(false) }
     val coordinates = remember { arrayOfNulls<LayoutCoordinates>(1) }
-    val sleeping = pet.activity == PetActivity.SLEEP
+    // Only the activity is read at this level, so drags and toy steps recompose the scene, not the whole screen.
+    val activity by remember { derivedStateOf { pet.activity } }
+    val sleeping = activity == PetActivity.SLEEP
     val greetLabel = utilityText("Greet Chur", "Погладить Чура")
     val resetLabel = utilityText("Reset position", "Вернуть на место")
     val moveLabel = utilityText("Move Chur", "Переместить Чура")
@@ -62,21 +69,23 @@ fun PetScreen(onOpenSettings: () -> Unit, onSubmitCode: (String) -> Boolean,
     LaunchedEffect(treatSerial) {
         if (treatSerial == 0) return@LaunchedEffect
         treat = 0f
-        if (!reduced) repeat(18) { treat = (it + 1) / 18f; delay(33) }
+        if (!reduced) animate(0f, 1f, animationSpec = tween(600, easing = LinearEasing)) { value, _ -> treat = value }
         else { treat = 1f; delay(100) }
         pet = pet.settleTreat()
         event(GuideStep.PET_TREAT)
     }
-    LaunchedEffect(pet.activity, toy, reduced) {
-        if (pet.activity == PetActivity.TOY) {
-            do {
-                pet = pet.follow(toy.x - sizePx / 2, toy.y - sizePx / 2, 1f / 30)
+    LaunchedEffect(activity, toy, reduced) {
+        if (activity == PetActivity.TOY) {
+            var last = 0L
+            while (true) {
+                val now = withFrameNanos { it }
+                pet = pet.follow(toy.x - sizePx / 2, toy.y - sizePx / 2, if (last == 0L) 0f else (now - last) / 1e9f)
+                last = now
                 val target = Offset((toy.x - sizePx / 2).coerceIn(0f, pet.interaction.maxX),
                     (toy.y - sizePx / 2).coerceIn(0f, pet.interaction.maxY))
                 val delta = Offset(pet.interaction.x, pet.interaction.y) - target
                 if (delta.getDistance() < 1f || reduced) break
-                delay(33)
-            } while (true)
+            }
             event(GuideStep.PET_TOY)
         }
     }
@@ -93,10 +102,10 @@ fun PetScreen(onOpenSettings: () -> Unit, onSubmitCode: (String) -> Boolean,
                     pet = pet.copy(interaction = pet.interaction.copy(x = pet.interaction.maxX / 2, y = pet.interaction.maxY / 2))
                     toy = Offset(it.width / 2f, it.height / 2f); placed = true
                 }
-            }.pointerInput(pet.activity, sizePx) {
+            }.pointerInput(activity, sizePx) {
                 val scene = this@pointerInput.size
                 fun inside(p: Offset) = Offset(p.x.coerceIn(0f, scene.width.toFloat()), p.y.coerceIn(0f, scene.height.toFloat()))
-                if (pet.activity == PetActivity.TOY) awaitEachGesture {
+                if (activity == PetActivity.TOY) awaitEachGesture {
                     val down = awaitFirstDown(); toy = inside(down.position); down.consume()
                     while (true) {
                         val changes = awaitPointerEvent().changes
@@ -106,22 +115,20 @@ fun PetScreen(onOpenSettings: () -> Unit, onSubmitCode: (String) -> Boolean,
                     }
                 }
             }) {
-                if (room) Box(Modifier.absoluteOffset(
-                    x = with(density) { pet.interaction.x.toDp() },
-                    y = with(density) { pet.interaction.y.toDp() })
+                if (room) Box(Modifier.absoluteOffset { IntOffset(pet.interaction.x.roundToInt(), pet.interaction.y.roundToInt()) }
                     .size(size).guideTarget("pet").onGloballyPositioned { coordinates[0] = it }
                     .semantics {
                         contentDescription = if (sleeping) utilityText("Chur is sleeping", "Чур спит") else utilityText("Chur companion", "Питомец Чур")
                         // Mirror touch: a tap only reacts, and the pet ignores direct input while it plays with the toy.
-                        if (!sleeping && pet.activity != PetActivity.TOY) {
+                        if (!sleeping && activity != PetActivity.TOY) {
                             onClick(greetLabel) { pet = pet.copy(interaction = pet.interaction.tap()); event(GuideStep.PET_GREET); true }
                             customActions = listOf(
                                 CustomAccessibilityAction(resetLabel) { pet = pet.copy(interaction = pet.interaction.up(true).copy(x = pet.interaction.maxX / 2, y = pet.interaction.maxY / 2)); true },
                                 CustomAccessibilityAction(moveLabel) { pet = pet.copy(interaction = pet.interaction.copy(x = if (pet.interaction.x < pet.interaction.maxX / 2) pet.interaction.maxX else 0f)); event(GuideStep.PET_MOVE); true })
                         }
                     // guideToken is a key: a running gesture loop otherwise keeps the token it started with.
-                    }.pointerInput(sleeping, pet.activity == PetActivity.TOY, sizePx, guideToken) {
-                        if (!sleeping && pet.activity != PetActivity.TOY) awaitEachGesture {
+                    }.pointerInput(sleeping, activity == PetActivity.TOY, sizePx, guideToken) {
+                        if (!sleeping && activity != PetActivity.TOY) awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
                             val point = coordinates[0]?.takeIf { it.isAttached }?.localToRoot(down.position) ?: return@awaitEachGesture
                             pet = pet.copy(interaction = pet.interaction.down(point.x, point.y, down.uptimeMillis)); down.consume()
@@ -142,10 +149,10 @@ fun PetScreen(onOpenSettings: () -> Unit, onSubmitCode: (String) -> Boolean,
                             } finally { pet = pet.copy(interaction = pet.interaction.up(true)) }
                         }
                     }) { SpiritSurface(pet.interaction.render, Modifier.fillMaxSize()) }
-                if (pet.activity == PetActivity.TOY || pet.activity == PetActivity.TREAT) Canvas(Modifier.fillMaxSize()) {
+                if (activity == PetActivity.TOY || activity == PetActivity.TREAT) Canvas(Modifier.fillMaxSize()) {
                     val end = Offset(pet.interaction.x + sizePx / 2, pet.interaction.y + sizePx / 2)
                     val start = Offset(this.size.width / 2, this.size.height - 24.dp.toPx())
-                    val point = if (pet.activity == PetActivity.TOY) toy else start + (end - start) * treat
+                    val point = if (activity == PetActivity.TOY) toy else start + (end - start) * treat
                     drawCircle(Color(0xFFFFC45C), 9.dp.toPx(), point)
                 }
                 if (!room) Text(utilityText("More room is needed to show Chur. The controls still work.", "Для Чура нужно больше места. Кнопки по-прежнему работают."), Modifier.padding(16.dp))
@@ -155,7 +162,7 @@ fun PetScreen(onOpenSettings: () -> Unit, onSubmitCode: (String) -> Boolean,
                 TextButton(enabled = !sleeping, modifier = Modifier.guideTarget("toy"), onClick = {
                     toy = pet.toyOffer(sizePx).let { (x, y) -> Offset(x, y) }
                     act(PetAction.TOY)
-                }) { Text(utilityText(if (pet.activity == PetActivity.TOY) "Put toy away" else "Toy", if (pet.activity == PetActivity.TOY) "Убрать игрушку" else "Игрушка")) }
+                }) { Text(utilityText(if (activity == PetActivity.TOY) "Put toy away" else "Toy", if (activity == PetActivity.TOY) "Убрать игрушку" else "Игрушка")) }
                 // TextButton has no long press, so match its role, shape, and text style by hand.
                 Row(Modifier.guideTarget("sleep").clip(ButtonDefaults.textShape).combinedClickable(
                     role = Role.Button,

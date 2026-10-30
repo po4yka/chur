@@ -306,3 +306,90 @@ fn contributor_cannot_purge_source_media_even_with_a_valid_signed_chain() {
         ChurStatus::CatalogCorrupt
     );
 }
+
+/// `COLLECTION_MEMBERSHIP.md` §2 downgrades with a same-epoch `UPSERT`, so the
+/// contributor's earlier operations stay in this epoch's stream. Replaying them
+/// against the downgraded state used to report the whole log `CatalogCorrupt`.
+#[test]
+fn downgraded_contributor_history_replays_but_cannot_grow() {
+    let mut fixture = fixture(PermissionProfile::Contribute);
+    let mut log = CollectionOperationLog::new(id(5), 1, fixture.selector);
+    let contributed = log
+        .author(
+            id(8),
+            id(3),
+            id(4),
+            &fixture.operation_key,
+            Nonce::new([31; 24]),
+            &fixture.payload,
+            &fixture.recipient_key,
+            &fixture.recipient_membership,
+            &fixture.source_membership,
+            &fixture.collection_membership,
+        )
+        .expect("contributed operation");
+    log.accept(
+        &contributed,
+        &fixture.payload,
+        &fixture.recipient_membership,
+        &fixture.source_membership,
+        &fixture.collection_membership,
+    )
+    .expect("accept contribution");
+
+    let downgrade = CollectionMembershipRecord::new(
+        id(1),
+        id(5),
+        2,
+        *fixture.collection_membership.commitment(),
+        CollectionMembershipAction::Upsert(PermissionProfile::Read),
+        id(3),
+        id(4),
+        fixture.recipient_key.verifying_key(),
+        [21; 32],
+        1,
+        id(1),
+        id(2),
+        fixture.source_membership.generation(),
+        2,
+    )
+    .expect("downgrade")
+    .sign(&fixture.source_key);
+    fixture
+        .collection_membership
+        .accept(&downgrade, &fixture.source_membership)
+        .expect("accept downgrade");
+
+    let mut replayed = CollectionOperationLog::new(id(5), 1, fixture.selector);
+    assert_eq!(
+        replayed
+            .restore_accepted(
+                &contributed,
+                &fixture.payload,
+                &fixture.recipient_membership,
+                &fixture.source_membership,
+                &fixture.collection_membership,
+            )
+            .expect("accepted history survives the downgrade"),
+        ApplyOutcome::Applied
+    );
+    assert_eq!(
+        replayed
+            .author(
+                id(9),
+                id(3),
+                id(4),
+                &fixture.operation_key,
+                Nonce::new([32; 24]),
+                &fixture.payload,
+                &fixture.recipient_key,
+                &fixture.recipient_membership,
+                &fixture.source_membership,
+                &fixture.collection_membership,
+            )
+            .err()
+            .expect("downgraded member cannot author")
+            .status(),
+        ChurStatus::AuthenticationFailed
+    );
+}

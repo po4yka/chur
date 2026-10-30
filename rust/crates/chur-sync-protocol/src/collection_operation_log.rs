@@ -7,7 +7,6 @@ use chur_crypto::{Commitment, Key, Nonce};
 
 use crate::collection_membership::CollectionMembershipState;
 use crate::collection_operation::{CollectionObservedHead, CollectionOperation};
-use crate::grant::PermissionProfile;
 use crate::operation::DeviceSigningKey;
 use crate::operation_log::{ApplyOutcome, ForkState};
 use crate::payload::{OperationPayload, PayloadBody};
@@ -183,6 +182,11 @@ impl CollectionOperationLog {
     }
 
     /// Replays one record already committed in the protected local catalog.
+    ///
+    /// `accept` authorized the record against the membership in force when it
+    /// arrived. Replay checks integrity and identity only: a later same-epoch
+    /// downgrade (`COLLECTION_MEMBERSHIP.md` §2) or key re-pin changes who may
+    /// author next, not whether history already accepted stays valid.
     pub fn restore_accepted(
         &mut self,
         operation: &CollectionOperation,
@@ -209,25 +213,21 @@ impl CollectionOperationLog {
             "restored collection operation signature is invalid"
         );
         if operation.issuer_identity_vault_id() != collection_membership.source_vault_id() {
-            let member = collection_membership
-                .member(
-                    operation.issuer_identity_vault_id(),
-                    operation.issuer_device_id(),
-                )
-                .ok_or_else(|| {
-                    Error::new(
-                        ChurStatus::CatalogCorrupt,
-                        "restored issuer is not a collection member",
-                    )
-                })?;
             ensure!(
-                member.signing_public_key() == issuer.signing_public_key()
-                    && (member.permissions() as u8 & PermissionProfile::Contribute as u8)
-                        == PermissionProfile::Contribute as u8
-                    && !matches!(
-                        payload.body(),
-                        PayloadBody::RewrapObjectKey { .. } | PayloadBody::PurgeObject { .. }
-                    ),
+                collection_membership
+                    .member(
+                        operation.issuer_identity_vault_id(),
+                        operation.issuer_device_id(),
+                    )
+                    .is_some(),
+                CatalogCorrupt,
+                "restored issuer is not a collection member"
+            );
+            ensure!(
+                !matches!(
+                    payload.body(),
+                    PayloadBody::RewrapObjectKey { .. } | PayloadBody::PurgeObject { .. }
+                ),
                 CatalogCorrupt,
                 "restored collection operation issuer is not authorized"
             );

@@ -1850,6 +1850,23 @@ fn private_workspace_commands_are_bounded_cas_and_restore_saved_source() {
     get.extend_from_slice(&id);
     assert_eq!(call(session, &get, &mut output), (OK, 8));
     assert_eq!(&output[..8], &[0; 8]);
+    // A file above the 64 KiB control-plane bound still fits the 16 MiB request bound.
+    let file = vec![0xA5u8; 100_000];
+    let mut put = vec![2];
+    put.extend_from_slice(&id);
+    put.extend_from_slice(&3u64.to_be_bytes());
+    put.extend_from_slice(&[0x55; 16]);
+    text(&mut put, "big.bin");
+    text(&mut put, "application/octet-stream");
+    put.extend_from_slice(&(file.len() as u32).to_be_bytes());
+    put.extend_from_slice(&file);
+    assert_eq!(call(session, &put, &mut output).0, OK);
+    let mut read = vec![3];
+    read.extend_from_slice(&id);
+    read.extend_from_slice(&[0x55; 16]);
+    let mut big = vec![0u8; 8_388_608];
+    assert_eq!(call(session, &read, &mut big), (OK, 100_000));
+    assert_eq!(&big[..100_000], &file[..]);
     output.fill(0);
     save.fill(0);
     set.fill(0);

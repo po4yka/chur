@@ -401,7 +401,7 @@ pub unsafe extern "C" fn chur_private_note_attachments(
                 "the attachment request length is out of range"
             )
         })?;
-        let input = unsafe { api::borrow_bytes(request, request_length)? };
+        let input = unsafe { api::borrow_large(request, request_length)? };
         let mut r = Reader {
             bytes: input,
             at: 0,

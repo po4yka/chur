@@ -108,8 +108,9 @@ fun PetScreen(onOpenSettings: () -> Unit, onSubmitCode: (String) -> Boolean,
                     .size(size).guideTarget("pet").onGloballyPositioned { coordinates[0] = it }
                     .semantics {
                         contentDescription = if (sleeping) utilityText("Chur is sleeping", "Чур спит") else utilityText("Chur companion", "Питомец Чур")
-                        if (!sleeping) {
-                            onClick(greetLabel) { act(PetAction.GREET); event(GuideStep.PET_GREET); true }
+                        // Mirror touch: a tap only reacts, and the pet ignores direct input while it plays with the toy.
+                        if (!sleeping && pet.activity != PetActivity.TOY) {
+                            onClick(greetLabel) { pet = pet.copy(interaction = pet.interaction.tap()); event(GuideStep.PET_GREET); true }
                             customActions = listOf(
                                 CustomAccessibilityAction(resetLabel) { pet = pet.copy(interaction = pet.interaction.up(true).copy(x = pet.interaction.maxX / 2, y = pet.interaction.maxY / 2)); true },
                                 CustomAccessibilityAction(moveLabel) { pet = pet.copy(interaction = pet.interaction.copy(x = if (pet.interaction.x < pet.interaction.maxX / 2) pet.interaction.maxX else 0f)); event(GuideStep.PET_MOVE); true })

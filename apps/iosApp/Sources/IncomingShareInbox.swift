@@ -178,7 +178,10 @@ final class IncomingShareInbox: @unchecked Sendable {
             let writer = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
             var complete = false
             defer { try? writer.close(); if !complete { try? FileManager.default.removeItem(at: output) } }
+            // iOS data protection is not supported by every macOS host filesystem.
+            #if os(iOS)
             try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: output.path)
+            #endif
             try writer.write(contentsOf: header)
             var metadata = try JSONEncoder().encode(meta)
             defer { metadata.resetBytes(in: 0..<metadata.count) }

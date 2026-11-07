@@ -87,7 +87,10 @@ final class IncomingShareSelection: @unchecked Sendable {
                     // Keep the file until the producer exits even if cancellation
                     // runs during decryption. unlink is safe while fd remains open.
                     lease.add { try? FileManager.default.removeItem(at: target) }
+                    // Keep data protection mandatory on iOS; host tests use owner-only files.
+                    #if os(iOS)
                     try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: target.path)
+                    #endif
                     try reader.stream(to: fd, shouldContinue: continuing)
                     guard continuing() else { throw IncomingShareFailure.cancelled }
                     delivered = true

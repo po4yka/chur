@@ -142,9 +142,9 @@ dependencies = [
 
 [[package]]
 name = "blobby"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89af0b093cc13baa4e51e64e65ec2422f7e73aea0e612e5ad3872986671622f1"
+checksum = "2a2d27f438abc673fba239d3767f7da4e1a10276280b412d90ca31bc2fbd76db"
 
 [[package]]
 name = "block-buffer"

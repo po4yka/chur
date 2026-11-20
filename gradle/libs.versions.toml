@@ -6,11 +6,11 @@
 
 [versions]
 camerax = "1.6.2"
-filament = "1.77.3"
+filament = "1.80.1"
 # Toolchain
 jdk = "21"
 kotlin = "2.4.21"
-agp = "9.5.0"
+agp = "9.5.2"
 composeMultiplatform = "1.12.2"
 # Compose Multiplatform Material 3 ships on its own version line, not the
 # release-train number above.
@@ -32,7 +32,7 @@ ndk = "30.0.16248370"
 iosDeploymentTarget = "18.0"
 
 # Libraries
-kotlinxSerialization = "1.12.0"
+kotlinxSerialization = "1.13.0"
 kotlinxCoroutines = "1.11.0"
 androidxCoreKtx = "1.19.1"
 androidxActivityCompose = "1.13.0"
@@ -55,7 +55,7 @@ androidxMedia3 = "1.11.1"
 androidxSecurityState = "1.1.0"
 androidTesseract = "4.9.0"
 # Android-only source-backed chrome; iOS uses UIKit materials.
-haze = "2.0.1"
+haze = "2.1.0"
 markdownRenderer = "0.46.0"
 
 [libraries]

@@ -72,7 +72,7 @@ unicode-normalization = { version = "0.1", default-features = false }
 # requires the FTS5 module the same SQLite build already carries. Keep default
 # features off to exclude the unused WebAssembly VFS from Chur's native builds.
 # Target-only WebAssembly packages may still appear in Cargo.lock.
-rusqlite = { version = "0.42", default-features = false, features = [
+rusqlite = { version = "0.43", default-features = false, features = [
     "bundled-sqlcipher-vendored-openssl",
     "column_decltype",
     "limits",

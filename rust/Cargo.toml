@@ -69,10 +69,10 @@ unicode-normalization = { version = "0.1", default-features = false }
 
 # The private catalog engine. ADR-0004 names SQLCipher accessed directly from
 # Rust as the physical implementation, and CATALOG_SCHEMA_V1.md section 16.4
-# requires the FTS5 module the same SQLite build already carries. Default
-# features are off: they add a WebAssembly VFS and its wasm-bindgen graph that
-# no Chur target uses.
-rusqlite = { version = "0.41", default-features = false, features = [
+# requires the FTS5 module the same SQLite build already carries. Keep default
+# features off to exclude the unused WebAssembly VFS from Chur's native builds.
+# Target-only WebAssembly packages may still appear in Cargo.lock.
+rusqlite = { version = "0.42", default-features = false, features = [
     "bundled-sqlcipher-vendored-openssl",
     "column_decltype",
     "limits",

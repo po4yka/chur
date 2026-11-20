@@ -3,4 +3,4 @@
 # like a dependency upgrade, and it must not silently change persisted or wire
 # bytes. The supported floor is `rust-version` in Cargo.toml, which is lower.
 [toolchain]
-channel = "1.99.1"
+channel = "1.100.0"

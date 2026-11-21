@@ -74,13 +74,13 @@ Security-critical additions require a dedicated reviewer.
 
 ## Haze 2 Android navigation material
 
-The Android source set of `shared/app` uses the exact **2.0.1** release of
+The Android source set of `shared/app` uses the exact **2.1.0** release of
 `dev.chrisbanes.haze:haze`, `haze-blur`, and `haze-glass`. These render navigation
 material over shared Compose content. iOS uses UIKit and does not link Haze.
 The alternative evaluated was Kyant Backdrop; implementing and maintaining a
 second custom optics engine would add unnecessary rendering and lifecycle code.
 
-- **Owner and license:** [Chris Banes / Haze](https://github.com/chrisbanes/haze/tree/2.0.1),
+- **Owner and license:** [Chris Banes / Haze](https://github.com/chrisbanes/haze/tree/2.1.0),
   Apache-2.0. Preserve the upstream license and applicable notices in distribution.
   Release/source inspection is not an independent security audit.
 - **Scope:** Android graphics and Compose runtime dependencies; no Rust or C ABI
@@ -88,17 +88,17 @@ second custom optics engine would add unnecessary rendering and lifecycle code.
   runtime network request is required by this integration. Resolve transitives
   through the checked-in Gradle lockfiles. Dependency updates remain deliberate.
 - **Resolved Android graph:** the three direct modules also bring
-  `haze-utils:2.0.1` and their Android variants. The combined Markdown/Haze
+  `haze-utils:2.1.0` and their Android variants. The combined Markdown/Haze
   Android runtime locks select Activity 1.13.0,
-  Core 1.19.1, AndroidX and JetBrains Lifecycle 2.11.0, Tracing 2.0.3,
+  Core 1.19.1, AndroidX and JetBrains Lifecycle 2.11.0, Tracing 2.0.5,
   and NavigationEvent 1.0.0. Core compile/metadata entries remain at 1.18.0;
   the higher runtime resolution preserves Haze's constraint. Collection keeps
-  its 1.5.0 compile and 1.6.0 runtime resolutions, with common resolution
-  metadata at 1.6.0. Compose 1.12.1 and Kotlin 2.4.21 are unchanged by this
-  integration. Haze adds no iOS renderer artifacts, native library, or change
-  to stored vault formats. The four reviewed Android
-  AARs total 887,401 downloaded bytes and contain no `jni/` or `prefab/`
-  entries; this is not a measurement of the final APK size increase.
+  its 1.5.0 Android compile resolution and resolves to 1.7.0 at Android
+  runtime and in common dependency metadata. The Compose Multiplatform catalog
+  pin remains 1.12.2 and the Kotlin pin remains 2.4.21. Haze adds no iOS
+  renderer artifacts or change to stored vault formats. The four reviewed
+  Android 2.1.0 AARs total 1,292,605 downloaded bytes and contain no `jni/` or
+  `prefab/` entries; this is not a measurement of the final APK size increase.
 - **Runtime policy:** API 33+ uses AGSL glass, API 31–32 uses RenderEffect blur,
   and API 29–30 uses opaque surfaces. Increased contrast uses opaque surfaces.
   Source retention is `ClearWhenUnavailable`; the source and effect graph belong

@@ -41,18 +41,18 @@ No vault format, permission, account, cryptographic primitive, or FFI vault ABI 
 
 ## Native implementations
 
-Both standard application targets include Filament 1.77.3. Android uses TextureView/transparent swapchain. The iOS checked-in Xcode project and its `project.yml` compile Swift→Objective-C++→Filament Metal; its prebuild script prepares the checksum-pinned official SDK and stages the selected platform's static archives. A missing model or renderer initialization failure uses the transparent PNG fallback. Fallback does not provide 3D animation.
+Android uses Filament 1.80.1 with a TextureView/transparent swapchain. iOS remains on Filament 1.77.3. The checked-in Xcode project and its `project.yml` compile Swift→Objective-C++→Filament Metal; its prebuild script prepares the checksum-pinned official SDK and stages the selected platform's static archives. A missing model or renderer initialization failure uses the transparent PNG fallback. Fallback does not provide 3D animation.
 
 The adapters share authored coordinates (+Yup,+Zfront), origin camera, square orthographic safe bounds±1.125, warm100klux sunlight and no bloom/postprocessing. Narrow surfaces expand the frame rather than crop. They restore base transforms before sampling, snapshot the displayed authored pose for interruptions, apply a sole eye controller, then bounded tail offsets. The first two tail joints remain stiff. Native pixel parity is still a device gate, not established by matching constants.
 
 ## Dependency review
 
 - **Capability/alternatives:** glTF skin/morph animation and transparent native rendering. Compose has no existing 3D renderer. RealityKit/USDZ needs a separate iOS asset/parity path; WebView/game engines introduce a larger integration surface.
-- **Owner/license:** Google Filament, Apache 2.0; official release pinned to 1.77.3. License text is bundled on both platforms. No claim of independent security audit of this release.
+- **Owner/license:** Google Filament, Apache 2.0; official releases pinned to 1.80.1 on Android and 1.77.3 on iOS. License text is bundled on both platforms. No claim of independent security audit of either release.
 - **Native surface:** Filament, backend, gltfio and its SDK static dependencies (including mesh/texture codecs). No runtime shader compiler, downloaded model or user-provided parser input. Android uses engine+gltfio AARs, without filament-utils.
 - **Build network/reproducibility:** Android uses Maven artifacts and generated Gradle locks. iOS preparation downloads only the official release URL and checks SHA-256 `40bc8e5a51040cc4b0bf8aaff7bf339ce16e13485644f60dbe1cb023b284fde7`; an existing matching archive can be supplied through `FILAMENT_ARCHIVE`. SDK/cache files are ignored and not committed.
-- **Targets/size:** Android arm64/x86_64 and iOS arm64/device+Simulator through the app's existing platform baselines. Downloaded Android AARs total about10.7MiB across all included ABIs; the official iOS SDK is much larger than the linked app delta. Current debug package size and a bounded simulator memory check are recorded in the validation report. Release-size delta, thermal behavior, and sustained physical-device frame times remain open.
-- **Updates/removal:** keep SDK/runtime/tool versions in sync; recheck asset contract, locks, native builds, notices/advisories and device behavior. Removing the feature removes both native adapters/dependencies, prebuild staging, bundled art, pet screen, and guide presentation.
+- **Targets/size:** Android arm64/x86_64 and iOS arm64/device+Simulator through the app's existing platform baselines. The two Android 1.80.1 AARs total about 10.2 MiB across all included ABIs; the official iOS SDK is much larger than the linked app delta. The dated validation report records debug package size and a bounded simulator memory check for the integration it tested. Release-size delta, thermal behavior, and sustained physical-device frame times remain open.
+- **Updates/removal:** keep SDK/runtime/tool versions in sync within each platform; recheck asset contract, locks, native builds, notices/advisories and device behavior. Removing the feature removes both native adapters/dependencies, prebuild staging, bundled art, pet screen, and guide presentation.
 
 The GLB/PNG are intentional product artwork, not compiled application binaries or test recordings. GLB SHA-256: `feb2a8450932520e63673a4b07cc4d5c37f1170cb7bafe9a880683a6582fa429`. The adjacent manifest records clip/rig/eye/tail constraints. Nine authored clips are present; the pet also uses notice/sleep/wake. Heavy cinematic scenes are excluded.
 
@@ -81,12 +81,15 @@ Commands:
 - `./gradlew -I tests/spirit/verify-dependencies.gradle :shared:app:verifySpiritDependencies :apps:androidApp:verifySpiritDependencies`
 - Standard project builds/tests from `DEVELOPMENT.md`; Apple setup in `apps/iosApp/SpiritRenderer/README.md`.
 
-Official sources: https://github.com/google/filament/tree/v1.77.3 and https://repo.maven.apache.org/maven2/com/google/android/filament/filament-android/1.77.3/
+Official sources: [Android source](https://github.com/google/filament/tree/v1.80.1),
+[Android engine](https://repo.maven.apache.org/maven2/com/google/android/filament/filament-android/1.80.1/),
+[Android gltfio](https://repo.maven.apache.org/maven2/com/google/android/filament/gltfio-android/1.80.1/),
+and [iOS source](https://github.com/google/filament/tree/v1.77.3).
 
 ### Distribution notices
 
 Both applications bundle the Filament Apache-2.0 license and a conservative
-runtime dependency notice inventory taken verbatim from the pinned upstream
-v1.77.3 source (including codecs and material helpers). Each inventory entry
+runtime dependency notice inventory taken verbatim from each platform's pinned
+upstream source (including codecs and material helpers). Each inventory entry
 records its upstream path and source-content SHA-256. Review the inventory
 when changing the SDK version or linked native archives.

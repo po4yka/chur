@@ -14,6 +14,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
+FILAMENT_NOTICE = "assets/licenses/filament-THIRD-PARTY-NOTICES"
 ABIS = {"arm64-v8a": "aarch64-linux-android", "x86_64": "x86_64-linux-android"}
 
 
@@ -36,6 +37,17 @@ def build_id(readelf: Path, binary: Path) -> str:
 def digest(path: Path) -> str:
     with path.open("rb") as source:
         return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def verify_filament_notice(apk_zip: zipfile.ZipFile, aab_zip: zipfile.ZipFile) -> str:
+    source = ROOT / "shared/app/src/androidMain" / FILAMENT_NOTICE
+    require(source.is_file(), f"missing checked-in Filament notice: {source}")
+    expected = source.read_bytes()
+    for label, archive, entry in (("APK", apk_zip, FILAMENT_NOTICE),
+                                  ("AAB", aab_zip, f"base/{FILAMENT_NOTICE}")):
+        require(archive.namelist().count(entry) == 1, f"{label} must contain exactly one {entry}")
+        require(archive.read(entry) == expected, f"{label} {entry} differs from the checked-in notice")
+    return hashlib.sha256(expected).hexdigest()
 
 
 def main() -> None:
@@ -72,6 +84,7 @@ def main() -> None:
             "AAB signer differs from the release certificate")
 
     with zipfile.ZipFile(apk) as apk_zip, zipfile.ZipFile(aab) as aab_zip, zipfile.ZipFile(symbols) as symbol_zip:
+        notice_sha256 = verify_filament_notice(apk_zip, aab_zip)
         apk_libs = {name.removeprefix("lib/") for name in apk_zip.namelist()
                     if name.startswith("lib/") and name.endswith(".so")}
         aab_libs = {name.removeprefix("base/lib/") for name in aab_zip.namelist()
@@ -118,6 +131,7 @@ def main() -> None:
             "dev.po4yka.chur.ffi.ChurJni -> dev.po4yka.chur.ffi.ChurJni:" in mapping.read_text(),
             "R8 mapping is absent or renamed the JNI class")
     print(f"release checks passed: {len(apk_libs)} native libraries, two ABIs, 16 KiB alignment, R8, matching symbols and signer")
+    print(f"verified Filament notice in APK and AAB: sha256 {notice_sha256}")
     for path in (apk, aab, symbols, mapping):
         print(f"sha256 {digest(path)}  {path}")
 

@@ -1736,6 +1736,7 @@ enum class SyncRecordKind(
 ) {
     OPERATION(1),
     CHECKPOINT(2),
+    OPERATION_PAGE(3),
 }
 
 /**

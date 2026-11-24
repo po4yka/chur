@@ -65,18 +65,28 @@ pub struct LockedStaging {
 }
 
 impl LockedStaging {
-    /// Opens or creates one vault's staging directory and removes crash temps.
+    /// Opens or creates one vault's staging directory.
     pub fn open(directory: impl Into<PathBuf>) -> Result<Self> {
         let directory = directory.into();
         std::fs::create_dir_all(&directory)
             .map_err(|_| Error::new(ChurStatus::IoFailure, "sync staging could not be created"))?;
-        let area = Self { directory };
-        area.sweep_temporary()?;
-        Ok(area)
+        Ok(Self { directory })
     }
 
     /// Durably stages one unacknowledged record, evicting oldest records first.
     pub fn stage(&mut self, id: Id, staged_at_ms: u64, bytes: &[u8]) -> Result<()> {
+        self.stage_many(staged_at_ms, [(id, bytes)])
+    }
+
+    /// Stages a page with one scan of the retained metadata. Each installed
+    /// record is durable and the queue returns within bounds before the next.
+    pub fn stage_many<B: AsRef<[u8]>>(
+        &mut self,
+        staged_at_ms: u64,
+        records: impl IntoIterator<Item = (Id, B)>,
+    ) -> Result<()> {
+        let _claim = crate::paths::DirectoryClaim::take(&self.directory)?;
+        self.sweep_temporary()?;
         ensure!(
             staged_at_ms
                 .checked_add(bounds::STAGED_RETENTION_MS)
@@ -84,32 +94,67 @@ impl LockedStaging {
             InvalidInput,
             "staging time has no retention successor"
         );
-        let payload_len = u64::try_from(bytes.len()).map_err(|_| {
-            Error::new(
-                ChurStatus::ResourceLimitExceeded,
-                "staged record length does not fit u64",
-            )
-        })?;
-        ensure!(
-            payload_len <= bounds::STAGED_BYTES_MAX,
-            ResourceLimitExceeded,
-            "one staged record exceeds the per-vault byte bound"
-        );
-        if let Some(existing) = self.record(&id, staged_at_ms)? {
+        let mut inventory = None;
+        for (id, payload) in records {
+            let bytes = payload.as_ref();
+            let payload_len = bytes.len() as u64;
             ensure!(
-                existing.bytes() == bytes,
-                Conflict,
-                "staged record identifier names different bytes"
+                payload_len <= bounds::STAGED_BYTES_MAX,
+                ResourceLimitExceeded,
+                "one staged record exceeds the per-vault byte bound"
             );
-            return Ok(());
-        }
+            if let Some(existing) = self.record(&id, staged_at_ms)? {
+                ensure!(
+                    existing.bytes() == bytes,
+                    Conflict,
+                    "staged record identifier names different bytes"
+                );
+                continue;
+            }
 
-        // The new record is installed before any old record is evicted. A
-        // process that dies between the two steps leaves one record above the
-        // bound, which the next stage evicts; the reverse order would lose an
-        // old record and the new one together.
-        self.install(&id, staged_at_ms, payload_len, bytes)?;
-        self.evict_for(&id, staged_at_ms, payload_len)
+            let (entries, total) = match &mut inventory {
+                Some(inventory) => inventory,
+                None => {
+                    let entries = self.scan(staged_at_ms)?;
+                    let total = entries.iter().try_fold(0u64, |total, entry| {
+                        total.checked_add(entry.payload_len).ok_or_else(|| {
+                            Error::new(
+                                ChurStatus::ResourceLimitExceeded,
+                                "staged byte total overflows",
+                            )
+                        })
+                    })?;
+                    inventory.insert((entries, total))
+                }
+            };
+
+            // A crash after install and before eviction can leave one extra
+            // record, but cannot discard an old record without its replacement.
+            self.install(&id, staged_at_ms, payload_len, bytes)?;
+            *total = total.checked_add(payload_len).ok_or_else(|| {
+                Error::new(
+                    ChurStatus::ResourceLimitExceeded,
+                    "staged byte total overflows",
+                )
+            })?;
+            while entries.len() >= bounds::STAGED_RECORDS_MAX || *total > bounds::STAGED_BYTES_MAX {
+                let oldest = entries.remove(0);
+                self.remove(&oldest.id)?;
+                *total -= oldest.payload_len;
+            }
+            let position = entries
+                .partition_point(|entry| (entry.staged_at_ms, entry.id) < (staged_at_ms, id));
+            entries.insert(
+                position,
+                Entry {
+                    id,
+                    staged_at_ms,
+                    payload_len,
+                    path: self.record_path(&id),
+                },
+            );
+        }
+        Ok(())
     }
 
     /// Writes one record under its temporary name, then renames it into place.
@@ -152,43 +197,6 @@ impl LockedStaging {
         sync_directory(&self.directory)
     }
 
-    /// Evicts the oldest records other than `kept` until the area is within
-    /// its bounds again, counting `kept` with `kept_len` bytes.
-    fn evict_for(&self, kept: &Id, now_ms: u64, kept_len: u64) -> Result<()> {
-        let mut entries: Vec<Entry> = self
-            .scan(now_ms)?
-            .into_iter()
-            .filter(|entry| &entry.id != kept)
-            .collect();
-        let mut total = entries.iter().try_fold(kept_len, |sum, entry| {
-            sum.checked_add(entry.payload_len).ok_or_else(|| {
-                Error::new(
-                    ChurStatus::ResourceLimitExceeded,
-                    "staged byte total overflows",
-                )
-            })
-        })?;
-        let mut evicted = false;
-        while entries.len() >= bounds::STAGED_RECORDS_MAX || total > bounds::STAGED_BYTES_MAX {
-            if entries.is_empty() {
-                break;
-            }
-            let oldest = entries.remove(0);
-            std::fs::remove_file(&oldest.path).map_err(|_| {
-                Error::new(
-                    ChurStatus::IoFailure,
-                    "old staged record could not be evicted",
-                )
-            })?;
-            total -= oldest.payload_len;
-            evicted = true;
-        }
-        if evicted {
-            sync_directory(&self.directory)?;
-        }
-        Ok(())
-    }
-
     /// Returns the oldest retained record without acknowledging or deleting it.
     pub fn next(&mut self, now_ms: u64) -> Result<Option<StagedRecord>> {
         let Some(entry) = self.scan(now_ms)?.into_iter().next() else {
@@ -197,20 +205,47 @@ impl LockedStaging {
         self.read_record(&entry).map(Some)
     }
 
-    /// Returns every retained record in stable oldest-first order.
-    pub fn records(&mut self, now_ms: u64) -> Result<Vec<StagedRecord>> {
-        self.scan(now_ms)?
-            .iter()
-            .map(|entry| self.read_record(entry))
-            .collect()
+    /// Reads retained records one at a time in stable oldest-first order.
+    pub fn records(
+        &self,
+        now_ms: u64,
+    ) -> Result<impl ExactSizeIterator<Item = Result<StagedRecord>> + '_> {
+        let claim = crate::paths::DirectoryClaim::take(&self.directory)?;
+        self.sweep_temporary()?;
+        Ok(self.scan(now_ms)?.into_iter().map(move |entry| {
+            let _held = &claim;
+            self.read_record(&entry)
+        }))
     }
 
     /// Returns one retained record without acknowledging or deleting it.
-    pub fn record(&mut self, id: &Id, now_ms: u64) -> Result<Option<StagedRecord>> {
-        let Some(entry) = self.scan(now_ms)?.into_iter().find(|entry| &entry.id == id) else {
-            return Ok(None);
+    pub fn record(&self, id: &Id, now_ms: u64) -> Result<Option<StagedRecord>> {
+        let name = format!("{}{SUFFIX}", id.to_hex());
+        let path = self.directory.join(&name);
+        let kind = match path.symlink_metadata() {
+            Ok(metadata) => metadata.file_type(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => {
+                return Err(Error::new(
+                    ChurStatus::IoFailure,
+                    "staged metadata could not be read",
+                ));
+            }
         };
-        self.read_record(&entry).map(Some)
+        if kind.is_file() {
+            match read_entry(&path, &name) {
+                Ok(entry)
+                    if now_ms.saturating_sub(entry.staged_at_ms) < bounds::STAGED_RETENTION_MS =>
+                {
+                    return self.read_record(&entry).map(Some);
+                }
+                Ok(_) => {}
+                Err(error) if error.status() == ChurStatus::CatalogCorrupt => {}
+                Err(error) => return Err(error),
+            }
+        }
+        self.remove(id)?;
+        Ok(None)
     }
 
     /// Number of non-expired staged records.
@@ -219,7 +254,7 @@ impl LockedStaging {
     }
 
     /// Removes a record only after its caller has fully validated or rejected it.
-    pub fn remove(&mut self, id: &Id) -> Result<()> {
+    pub fn remove(&self, id: &Id) -> Result<()> {
         match std::fs::remove_file(self.record_path(id)) {
             Ok(()) => sync_directory(&self.directory),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -467,8 +502,7 @@ mod tests {
         let ids: Vec<Id> = area
             .records(2)
             .expect("records")
-            .iter()
-            .map(|record| *record.id())
+            .map(|record| *record.expect("read record").id())
             .collect();
         assert_eq!(ids, vec![oldest, survivor]);
 
@@ -480,8 +514,7 @@ mod tests {
         let ids: Vec<Id> = area
             .records(3)
             .expect("records")
-            .iter()
-            .map(|record| *record.id())
+            .map(|record| *record.expect("read record").id())
             .collect();
         assert_eq!(ids, vec![survivor, newest]);
         std::fs::remove_dir_all(path).expect("cleanup");

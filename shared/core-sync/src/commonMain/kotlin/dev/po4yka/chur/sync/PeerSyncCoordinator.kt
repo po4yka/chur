@@ -270,7 +270,15 @@ public class PeerSyncCoordinator(private val clock: () -> Long = { 0L }) {
                 val response = request(PeerMessage("history", bytes = number(target, 8), id = head.device, offset = after.toString()))
                 val page = response.records
                 require(page.isNotEmpty() && page.size <= 256) { "peer omitted signed history" }
-                for (record in page) vault.stage(vaultId, SyncRecordKind.OPERATION, clock(), record)
+                val encoded = ByteArray(page.sumOf { 4 + it.size })
+                var offset = 0
+                for (operation in page) {
+                    number(operation.size.toULong(), 4).copyInto(encoded, offset)
+                    offset += 4
+                    operation.copyInto(encoded, offset)
+                    offset += operation.size
+                }
+                vault.stage(vaultId, SyncRecordKind.OPERATION_PAGE, clock(), encoded)
                 checkReport(vault.process() ?: locked())
                 // This is only a bounded fetch position. Durable heads advance exclusively in Rust.
                 val next = response.offset.toULong()

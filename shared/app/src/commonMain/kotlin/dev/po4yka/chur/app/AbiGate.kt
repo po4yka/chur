@@ -73,9 +73,9 @@ public const val EXPECTED_ABI_MAJOR: UInt = 7u
  *
  * `FFI_CONTRACT.md` §2 makes a minor version additive, so a newer minor is
  * accepted and an older one is refused here, before a missing symbol is
- * reached. 7.3 adds re-encryption after a revocation.
+ * reached. 7.4 adds bounded pages to the locked sync inbox.
  */
-public const val REQUIRED_ABI_MINOR: UInt = 3u
+public const val REQUIRED_ABI_MINOR: UInt = 4u
 
 /** Build-flavor bit: a release build. */
 public const val FLAVOR_RELEASE: UInt = 1u

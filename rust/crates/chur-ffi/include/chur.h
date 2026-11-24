@@ -355,6 +355,7 @@ chur_status_t chur_session_close(chur_handle_t session);
 /* Opaque locked staging and unlocked validation, FFI_CONTRACT.md section 6.8. */
 #define CHUR_SYNC_RECORD_OPERATION 1
 #define CHUR_SYNC_RECORD_CHECKPOINT 2
+#define CHUR_SYNC_RECORD_OPERATION_PAGE 3
 chur_status_t chur_sync_stage(chur_handle_t runtime, const uint8_t vault_id[16],
                               uint8_t kind, uint64_t staged_at_ms,
                               const uint8_t *record, uint32_t record_length);

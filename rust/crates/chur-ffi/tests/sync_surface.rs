@@ -71,6 +71,41 @@ fn locked_stage_is_validated_and_removed_after_unlock() {
         },
         0
     );
+    let mut page = Vec::new();
+    page.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+    page.extend_from_slice(&bytes);
+    page.extend_from_slice(&3u32.to_be_bytes());
+    page.extend_from_slice(&[1, 2, 3]);
+    let mut malformed = page.clone();
+    malformed.pop();
+    assert_eq!(
+        unsafe {
+            chur_sync_stage(
+                runtime,
+                vault_id.as_bytes().as_ptr(),
+                3,
+                2,
+                malformed.as_ptr(),
+                malformed.len() as u32,
+            )
+        },
+        chur_core::ChurStatus::InvalidInput as i32
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            unsafe {
+                chur_sync_stage(
+                    runtime,
+                    vault_id.as_bytes().as_ptr(),
+                    3,
+                    2,
+                    page.as_ptr(),
+                    page.len() as u32,
+                )
+            },
+            0
+        );
+    }
     let unlock = ChurUnlockRequestV1 {
         factor: 1,
         reserved: [0; 3],
@@ -93,6 +128,7 @@ fn locked_stage_is_validated_and_removed_after_unlock() {
 
     assert_eq!(unsafe { chur_sync_process(session, 2, &mut report) }, 0);
     assert_eq!(report.duplicates, 1);
+    assert_eq!(report.rejected, 1);
     assert_eq!(report.pending, 0);
     assert_eq!(report.reserved, [0; 4]);
     assert_eq!(unsafe { chur_session_close(session) }, 0);

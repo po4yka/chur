@@ -53,12 +53,29 @@ pub fn stage_inbound(
     staged_at_ms: u64,
     record: &[u8],
 ) -> Result<()> {
-    let mut framed = Vec::with_capacity(record.len() + 1);
-    framed.push(kind as u8);
-    framed.extend_from_slice(record);
-    let digest = commit::commit(STAGED_RECORD_TAG, &[&framed]);
-    let id = Id::from_slice(&digest[..16])?;
-    LockedStaging::open(root.sync_inbox(&vault_id))?.stage(id, staged_at_ms, &framed)
+    stage_inbound_records(root, vault_id, kind, staged_at_ms, [record])
+}
+
+/// Durably stores a page of one record kind under a single staging claim.
+pub fn stage_inbound_records<'a>(
+    root: &VaultRoot,
+    vault_id: Id,
+    kind: StagedKind,
+    staged_at_ms: u64,
+    records: impl IntoIterator<Item = &'a [u8]>,
+) -> Result<()> {
+    let framed = records
+        .into_iter()
+        .map(|record| {
+            let mut framed = Vec::with_capacity(record.len() + 1);
+            framed.push(kind as u8);
+            framed.extend_from_slice(record);
+            let digest = commit::commit(STAGED_RECORD_TAG, &[&framed]);
+            let id = Id::from_slice(&digest[..16])?;
+            Ok((id, framed))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    LockedStaging::open(root.sync_inbox(&vault_id))?.stage_many(staged_at_ms, framed)
 }
 
 /// Validates and applies retained records after the vault unlocks.
@@ -95,13 +112,14 @@ pub fn process_staged(
     let mut settled = false;
     loop {
         let records = staging.records(now_ms)?;
-        if records.is_empty() {
+        if records.len() == 0 {
             report.pending = 0;
             break;
         }
         let mut removed = false;
         let mut pending = 0;
         for record in records {
+            let record = record?;
             match process_one(
                 db,
                 root,

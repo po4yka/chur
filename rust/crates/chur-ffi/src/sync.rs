@@ -133,6 +133,17 @@ pub unsafe extern "C" fn chur_sync_stage(
         );
         // SAFETY: the caller guarantees this readable range for the call.
         let record = unsafe { borrow_large(record, record_length)? };
+        if kind == 3 {
+            let records = operation_page(record)?;
+            let guard = registry::lock(guarded);
+            return sync_engine::stage_inbound_records(
+                guard.root(),
+                vault_id,
+                StagedKind::Operation,
+                staged_at_ms,
+                records,
+            );
+        }
         let kind = match kind {
             1 => StagedKind::Operation,
             2 => StagedKind::Checkpoint,
@@ -146,6 +157,35 @@ pub unsafe extern "C" fn chur_sync_stage(
         let guard = registry::lock(guarded);
         sync_engine::stage_inbound(guard.root(), vault_id, kind, staged_at_ms, record)
     })
+}
+
+fn operation_page(mut bytes: &[u8]) -> Result<Vec<&[u8]>> {
+    let mut records = Vec::new();
+    while !bytes.is_empty() {
+        let (length, rest) = bytes.split_first_chunk::<4>().ok_or_else(|| {
+            Error::new(
+                ChurStatus::InvalidInput,
+                "the sync page length is truncated",
+            )
+        })?;
+        let (record, rest) = rest
+            .split_at_checked(u32::from_be_bytes(*length) as usize)
+            .ok_or_else(|| {
+                Error::new(
+                    ChurStatus::InvalidInput,
+                    "the sync page record is truncated",
+                )
+            })?;
+        ensure!(
+            !record.is_empty() && records.len() < 256,
+            InvalidInput,
+            "the sync page has an empty record or too many records"
+        );
+        records.push(record);
+        bytes = rest;
+    }
+    ensure!(!records.is_empty(), InvalidInput, "the sync page is empty");
+    Ok(records)
 }
 
 /// Validates and applies the current vault's locked inbox after unlock.

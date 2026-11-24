@@ -759,7 +759,7 @@ fn restore_inner(
     let package_length = source
         .seek(SeekFrom::End(0))
         .map_err(|_| chur_core::err!(IoFailure, "the package length could not be read"))?;
-    let (backup_version, slots) = scan(source, package_length)?;
+    let (backup_version, slots) = scan(source, package_length, progress)?;
     // A version 1 package carries the catalog in one record and a version 2
     // package in a contiguous run of records, ADR-0068.
     let export_records = if backup_version == BACKUP_VERSION_V1 {
@@ -1221,7 +1221,11 @@ fn restore_inner(
 /// It reads headers only, so the scan of a 40 GB package costs twelve bytes per
 /// record. §13 requires the 32-byte preamble plus every header and payload to
 /// total the package length exactly, and this is where that is checked.
-fn scan(source: &mut (impl Read + Seek), package_length: u64) -> Result<(u16, Vec<RecordSlot>)> {
+fn scan(
+    source: &mut (impl Read + Seek),
+    package_length: u64,
+    progress: &impl Progress,
+) -> Result<(u16, Vec<RecordSlot>)> {
     let mut head = vec![0u8; chur_format::backup::PREAMBLE_LEN];
     source
         .seek(SeekFrom::Start(0))
@@ -1241,6 +1245,9 @@ fn scan(source: &mut (impl Read + Seek), package_length: u64) -> Result<(u16, Ve
     let mut slots = Vec::new();
     let mut offset = chur_format::backup::PREAMBLE_LEN as u64;
     for _ in 0..preamble.record_count() {
+        if progress.cancelled() {
+            return Err(progress::cancelled("the restore was cancelled"));
+        }
         let mut header = [0u8; RECORD_HEADER_LEN];
         source.read_exact(&mut header).map_err(|_| {
             chur_core::err!(VaultCorrupt, "the package ends inside a record header")

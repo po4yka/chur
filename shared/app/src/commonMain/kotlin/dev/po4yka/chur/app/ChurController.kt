@@ -1102,6 +1102,7 @@ class ChurController(
     fun lock(reason: LockReason = LockReason.USER) {
         trialSubmitted = false
         val drafts = if (reason == LockReason.PANIC) {
+            repository.requestPanicLock()
             lockDrafts.abort()
             emptyList()
         } else {

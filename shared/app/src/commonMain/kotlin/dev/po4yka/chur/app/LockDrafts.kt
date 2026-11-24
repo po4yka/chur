@@ -67,8 +67,7 @@ internal class LockDrafts(
     /**
      * How many captured edits a lock did not save: a save that failed, met
      * a newer revision, did not start within the bound, or did not finish
-     * in it. This is the record of a lost edit. No notice shows it, because
-     * the next session can belong to another identity.
+     * in it. The encrypted draft can still be recovered in the same vault.
      */
     var lost: Int = 0
         private set
@@ -91,7 +90,7 @@ internal class LockDrafts(
 
     /**
      * Runs [saves] and returns `true` when each one was saved. It never
-     * throws for a save: any failure of a save is a lost edit.
+     * throws for a save: any failure leaves the revision unchanged.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     suspend fun save(saves: List<Save>): Boolean {
@@ -105,7 +104,6 @@ internal class LockDrafts(
                         save.run { round.open }
                         true
                     } catch (_: Throwable) {
-                        // A conflict keeps the newer revision; the text is dropped.
                         false
                     }
                 }

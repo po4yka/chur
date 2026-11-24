@@ -420,18 +420,24 @@ pub unsafe extern "C" fn chur_private_note_attachments(
             at: 0,
         };
         let command = r.byte()?;
+        let minimum_output = match command {
+            3 | 10 => chur_catalog::note_attachments::FILE_MAX,
+            13 => DRAFT_LIMIT,
+            14 | 15 => 1,
+            _ => CAPACITY,
+        };
         ensure!(
-            capacity
-                >= if command == 3 || command == 10 {
-                    chur_catalog::note_attachments::FILE_MAX
-                } else {
-                    CAPACITY
-                },
+            capacity >= minimum_output,
             ResourceLimitExceeded,
             "the attachment output buffer is too small"
         );
         let output = unsafe { api::borrow_bytes_mut(destination, capacity)? };
         let mut out = Zeroizing::new(Vec::with_capacity(capacity));
+        if matches!(command, 13..=15) {
+            draft_control(session, command, &mut r, &mut out)?;
+            output[..out.len()].copy_from_slice(&out);
+            return unsafe { api::write_out(written, out.len()) };
+        }
         with_catalog(session, |db| {
             use chur_catalog::note_attachments as files;
             purge_expired(db)?;
@@ -633,6 +639,144 @@ pub unsafe extern "C" fn chur_private_note_attachments(
         unsafe { api::write_out(written, out.len()) }
     })
 }
+const DRAFT_LIMIT: usize = 16 + 8 + 2 + 8 + 256 + 262_144;
+const DRAFT_AAD: &[u8] = b"CHUR\0PRIVATE-NOTE-DRAFT\0V1";
+const DRAFT_FILE: &str = "note-draft";
+
+fn draft_path(session: &chur_catalog::vault::Session) -> std::path::PathBuf {
+    session
+        .root_dir()
+        .vault(&session.object_store_id())
+        .join(DRAFT_FILE)
+}
+
+pub(crate) fn clear_draft(session: &chur_catalog::vault::Session) -> Result<()> {
+    let path = draft_path(session);
+    let mut removed = false;
+    for file in [&path, &path.with_extension("tmp")] {
+        match std::fs::remove_file(file) {
+            Ok(()) => removed = true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {
+                return Err(chur_core::err!(
+                    IoFailure,
+                    "the note draft could not be removed"
+                ));
+            }
+        }
+    }
+    if removed {
+        chur_catalog::paths::sync_directory(
+            path.parent()
+                .ok_or_else(|| chur_core::err!(IoFailure, "the note draft directory is absent"))?,
+        )?;
+    }
+    Ok(())
+}
+
+fn draft_control(
+    session: Handle,
+    command: u8,
+    r: &mut Reader<'_>,
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    use chur_core::limits::{NONCE_LEN, TAG_LEN};
+    use chur_crypto::{Nonce, aead, kdf, random};
+    use std::io::{Read as _, Write as _};
+
+    let entry = registry::get(session, Kind::Session)?;
+    let Entry::Session { session, .. } = entry.as_ref() else {
+        return Err(chur_core::err!(InvalidInput, "the handle is not a session"));
+    };
+    let session = registry::lock(session);
+    let root = session.root_secret()?;
+    let path = draft_path(&session);
+    let key = kdf::derive_from(
+        root,
+        kdf::Label::RootPrivateSettings,
+        &kdf::Context::vault(&session.vault_id()),
+    )?;
+    match command {
+        13 => {
+            r.finished()?;
+            let file = match std::fs::File::open(&path) {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(_) => {
+                    return Err(chur_core::err!(
+                        IoFailure,
+                        "the note draft could not be opened"
+                    ));
+                }
+            };
+            let mut sealed = Vec::new();
+            file.take((DRAFT_LIMIT + NONCE_LEN + TAG_LEN + 1) as u64)
+                .read_to_end(&mut sealed)
+                .map_err(|_| chur_core::err!(IoFailure, "the note draft could not be read"))?;
+            ensure!(
+                sealed.len() <= DRAFT_LIMIT + NONCE_LEN + TAG_LEN,
+                VaultCorrupt,
+                "the note draft is too large"
+            );
+            let (nonce, ciphertext) = sealed
+                .split_first_chunk::<NONCE_LEN>()
+                .ok_or_else(|| chur_core::err!(VaultCorrupt, "the note draft is truncated"))?;
+            out.extend_from_slice(&aead::open(
+                &key,
+                &Nonce::new(*nonce),
+                ciphertext,
+                DRAFT_AAD,
+            )?);
+        }
+        14 => {
+            let start = r.at;
+            let id = r.take(16)?;
+            let revision = r.number()?;
+            ensure!(
+                (revision == 0) == id.iter().all(|byte| *byte == 0) && revision <= i64::MAX as u64,
+                InvalidInput,
+                "the draft note identity is invalid"
+            );
+            ensure!(r.byte()? <= 1, InvalidInput, "the draft pin is invalid");
+            notes::NoteFormat::try_from(r.byte()?)?;
+            r.string(256)?;
+            r.string(262_144)?;
+            r.finished()?;
+            let nonce = Nonce::new(random::array()?);
+            let sealed = aead::seal(&key, &nonce, &r.bytes[start..], DRAFT_AAD)?;
+            let temporary = path.with_extension("tmp");
+            let written = (|| {
+                let mut file = std::fs::File::create(&temporary)?;
+                file.write_all(nonce.as_bytes())?;
+                file.write_all(&sealed)?;
+                file.sync_all()?;
+                std::fs::rename(&temporary, &path)
+            })();
+            if written.is_err() {
+                let _ = std::fs::remove_file(temporary);
+                return Err(chur_core::err!(
+                    IoFailure,
+                    "the encrypted note draft could not be written"
+                ));
+            }
+            chur_catalog::paths::sync_directory(path.parent().ok_or_else(|| {
+                chur_core::err!(IoFailure, "the note draft directory is absent")
+            })?)?;
+        }
+        15 => {
+            r.finished()?;
+            clear_draft(&session)?;
+        }
+        _ => {
+            return Err(chur_core::err!(
+                InvalidInput,
+                "the note draft command is unknown"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn encode_organization(out: &mut Vec<u8>, org: &chur_catalog::note_workspace::Organization) {
     string(out, &org.folder);
     out.extend_from_slice(&(org.tags.len() as u32).to_be_bytes());

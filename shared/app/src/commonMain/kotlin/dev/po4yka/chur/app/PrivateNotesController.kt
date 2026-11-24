@@ -3,6 +3,7 @@ package dev.po4yka.chur.app
 import dev.po4yka.chur.core.model.ChurStatus
 import dev.po4yka.chur.ffi.ChurFailure
 import dev.po4yka.chur.ffi.PrivateNote
+import dev.po4yka.chur.ffi.PrivateNoteDraft
 import dev.po4yka.chur.ffi.PrivateNoteAttachment
 import dev.po4yka.chur.ffi.PrivateNoteAttachmentData
 import dev.po4yka.chur.ffi.fromHex
@@ -30,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -87,6 +89,10 @@ internal interface PrivateNotesAccess {
     suspend fun load(generation: Long, id: ByteArray): PrivateNote
     /** [proceed] is checked under the repository mutex just before the native call. */
     suspend fun save(generation: Long, saved: PrivateNote?, title: String, body: String, pinned: Boolean, format: PrivateNoteFormat, proceed: () -> Boolean = { true }): PrivateNote
+    suspend fun readDraft(generation: Long): PrivateNoteDraft? = null
+    suspend fun writeDraft(generation: Long, draft: PrivateNoteDraft?) {}
+    suspend fun saveForLock(generation: Long, editor: PrivateNoteEditorState, proceed: () -> Boolean): PrivateNote =
+        save(generation, editor.saved, editor.title, editor.body, editor.pinned, editor.format, proceed)
     suspend fun change(generation: Long, id: ByteArray, revision: Long, action: PrivateNoteAction): PrivateNote?
     suspend fun attachments(generation: Long, id: ByteArray): List<PrivateNoteAttachment>
     suspend fun readAttachment(generation: Long, id: ByteArray, attachmentId: ByteArray): ByteArray
@@ -111,6 +117,11 @@ private class VaultPrivateNotesAccess(private val vault: VaultRepository) : Priv
     override suspend fun historical(generation: Long, id: ByteArray, revision: Long) = vault.privateNoteRevision(generation, id, revision)
     override suspend fun restoreRevision(generation: Long, saved: PrivateNote, revision: Long) =
         vault.restorePrivateNoteRevision(generation, saved.noteId, saved.revision, revision)
+    override suspend fun readDraft(generation: Long) = vault.privateNoteDraft(generation)
+    override suspend fun writeDraft(generation: Long, draft: PrivateNoteDraft?) = vault.writePrivateNoteDraft(generation, draft)
+    override suspend fun saveForLock(generation: Long, editor: PrivateNoteEditorState, proceed: () -> Boolean) =
+        vault.savePrivateNote(generation, id = editor.saved?.noteId, expectedRevision = editor.saved?.revision ?: 0,
+            title = editor.title, body = editor.body, pinned = editor.pinned, format = editor.format, proceed = proceed, preserveDraft = true)
     override suspend fun load(generation: Long, id: ByteArray) = vault.privateNote(generation, id)
     override suspend fun save(generation: Long, saved: PrivateNote?, title: String, body: String, pinned: Boolean, format: PrivateNoteFormat, proceed: () -> Boolean) =
         vault.savePrivateNote(generation, id = saved?.noteId, expectedRevision = saved?.revision ?: 0,
@@ -161,6 +172,7 @@ class PrivateNotesController internal constructor(
     private var lockCaptured = false
     private var request = 0L
     private var listing: Job? = null
+    private var draftWrite: Job? = null
     private var cursor: ByteArray? = null
     private var nextCursor: ByteArray? = null
     private val previous = mutableListOf<ByteArray?>()
@@ -300,6 +312,44 @@ class PrivateNotesController internal constructor(
         }
     }
 
+    suspend fun recoverDraft() {
+        if (!current() || state.value.editor != null || state.value.busy) return
+        update { it.copy(busy = true) }
+        try {
+            val recovered = withContext(dispatcher) {
+                val draft = access.readDraft(generation) ?: return@withContext null
+                val saved = draft.noteId?.let { id ->
+                    try { access.load(generation, id) }
+                    catch (failure: ChurFailure) {
+                        if (failure.status == ChurStatus.NOT_FOUND) null else throw failure
+                    }
+                }
+                if (saved != null && saved.trashedAtMs == null && saved.title == draft.title &&
+                    saved.body == draft.body && saved.pinned == draft.pinned && saved.format == draft.format) {
+                    access.writeDraft(generation, null)
+                    return@withContext null
+                }
+                val base = saved?.takeIf { it.revision == draft.revision && it.trashedAtMs == null }
+                PrivateNoteEditorState(
+                    saved = base, title = draft.title, body = draft.body, pinned = draft.pinned, format = draft.format,
+                    attachments = base?.let { access.attachments(generation, it.noteId) }.orEmpty(),
+                    organization = base?.let { access.organization(generation, it.noteId) } ?: PrivateNoteOrganization(),
+                )
+            }
+            if (recovered != null) {
+                listing?.cancel()
+                request++
+                update { it.copy(editor = recovered, loading = false, error = "Recovered unsaved changes.") }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            update { it.copy(error = "The encrypted note draft could not be recovered.") }
+        } finally {
+            update { it.copy(busy = false) }
+        }
+    }
+
     override fun create() {
         if (!current() || state.value.busy || state.value.editor != null) return
         listing?.cancel()
@@ -395,6 +445,21 @@ class PrivateNotesController internal constructor(
             return
         }
         update { it.copy(editor = changed, history = null, historical = null, error = null) }
+        draftWrite?.cancel()
+        draftWrite = scope.launch {
+            try {
+                withContext(dispatcher) {
+                    access.writeDraft(generation, if (changed.canSave) PrivateNoteDraft(
+                        changed.saved?.noteId, changed.saved?.revision ?: 0, changed.title, changed.body,
+                        changed.pinned, changed.format,
+                    ) else null)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                update { it.copy(error = "The encrypted draft could not be saved. Save the note before locking.") }
+            }
+        }
     }
 
     override fun back() {
@@ -411,7 +476,12 @@ class PrivateNotesController internal constructor(
     }
     override fun dismissConfirmation() = update { it.copy(confirmation = null) }
     override fun discardAndBack() {
-        if (state.value.confirmation == PrivateNoteConfirmation.LEAVE && !state.value.busy) leaveEditor()
+        if (state.value.confirmation != PrivateNoteConfirmation.LEAVE) return
+        runAction {
+            draftWrite?.cancelAndJoin()
+            withContext(dispatcher) { access.writeDraft(generation, null) }
+            leaveEditor()
+        }
     }
     private fun leaveEditor() {
         update { it.copy(editor = null, history = null, historical = null, confirmation = null, error = null) }
@@ -433,8 +503,9 @@ class PrivateNotesController internal constructor(
         if (snapshot.busy) return null
         val editor = snapshot.editor ?: return null
         if (!editor.canSave) return null
+        draftWrite?.cancel()
         return LockDrafts.Save { proceed ->
-            withContext(dispatcher) { access.save(generation, editor.saved, editor.title, editor.body, editor.pinned, editor.format, proceed) }
+            withContext(dispatcher) { access.saveForLock(generation, editor, proceed) }
         }
     }
 
@@ -447,8 +518,10 @@ class PrivateNotesController internal constructor(
         if (!editor.canSave) return
         update { it.copy(confirmation = null) }
         runAction {
+            draftWrite?.cancelAndJoin()
             val saved = withContext(dispatcher) { access.save(generation, editor.saved, editor.title, editor.body, editor.pinned, editor.format) }
             update { it.copy(editor = PrivateNoteEditorState(saved, attachments = editor.attachments, organization = editor.organization), history = null, historical = null) }
+            withContext(dispatcher) { access.writeDraft(generation, null) }
             when {
                 export && current() -> if (encrypted) sendEncrypted(listOf(saved.selection())) else onExport(saved)
                 leave -> leaveEditor()

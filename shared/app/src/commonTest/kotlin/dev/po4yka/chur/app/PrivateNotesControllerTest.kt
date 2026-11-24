@@ -153,7 +153,7 @@ class PrivateNotesControllerTest {
         assertNotNull(controller.state.value.error)
         assertEquals("keep this text", controller.state.value.editor!!.body)
         assertTrue(controller.state.value.editor!!.dirty)
-        controller.back(); controller.discardAndBack()
+        controller.back(); controller.discardAndBack(); advanceUntilIdle()
         assertNull(controller.state.value.editor)
         assertEquals(1, access.saves)
         controller.close()

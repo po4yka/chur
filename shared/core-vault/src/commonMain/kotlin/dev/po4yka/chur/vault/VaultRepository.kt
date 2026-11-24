@@ -72,6 +72,7 @@ class VaultRepository(
     private val _state = MutableStateFlow<VaultState>(VaultState.Starting)
     private var runtime = 0L
     private var session = 0L
+    private val panicGeneration = MutableStateFlow<Long?>(null)
     private var generation = 0L
     private var lastUsedMs = 0L
 
@@ -235,6 +236,11 @@ class VaultRepository(
     suspend fun unlockWithDeviceSecret(secret: ByteArray) = mutex.withLock {
         requireRuntime()
         openSession { ChurVault.unlockWithDeviceSecret(runtime, secret) }
+    }
+
+    /** Promote a close already waiting for the editor to a panic close. */
+    fun requestPanicLock() {
+        panicGeneration.value = (_state.value as? VaultState.Unlocked)?.generation
     }
 
     /**
@@ -404,15 +410,24 @@ class VaultRepository(
 
     /** A stale editor must not access a later unlocked identity. */
     suspend fun privateNotes(generation: Long, terms: String = "", trashed: Boolean = false, limit: Int = 50, cursor: ByteArray? = null): PrivateNotePage = withNoteSession(generation) { ChurVault.privateNotes(it, terms, trashed, limit, cursor) }
+    suspend fun privateNoteDraft(generation: Long) = withNoteSession(generation, noteActivity = false) { ChurVault.privateNoteDraft(it) }
+    suspend fun writePrivateNoteDraft(generation: Long, draft: dev.po4yka.chur.ffi.PrivateNoteDraft?) =
+        withNoteSession(generation, noteActivity = false) { ChurVault.writePrivateNoteDraft(it, draft) }
     suspend fun privateNote(generation: Long, id: ByteArray): PrivateNote = withNoteSession(generation) { ChurVault.privateNote(it, id) }
     /**
      * A lock-time save passes [proceed]. It is checked under the mutex just
      * before the native call, so a save the lock no longer waits for never
      * starts.
      */
-    suspend fun savePrivateNote(generation: Long, id: ByteArray? = null, expectedRevision: Long = 0, title: String, body: String, pinned: Boolean = false, format: PrivateNoteFormat = PrivateNoteFormat.PLAIN_TEXT, proceed: () -> Boolean = { true }): PrivateNote = withNoteSession(generation) {
+    suspend fun savePrivateNote(generation: Long, id: ByteArray? = null, expectedRevision: Long = 0, title: String, body: String, pinned: Boolean = false, format: PrivateNoteFormat = PrivateNoteFormat.PLAIN_TEXT, proceed: () -> Boolean = { true }, preserveDraft: Boolean = false): PrivateNote = withNoteSession(generation) {
         if (!proceed()) throw ChurFailure(ChurStatus.VAULT_LOCKED, "the lock no longer waits for this save")
-        ChurVault.savePrivateNote(it, id, expectedRevision, title, body, pinned, format)
+        if (preserveDraft) {
+            ChurVault.writePrivateNoteDraft(it, dev.po4yka.chur.ffi.PrivateNoteDraft(id, expectedRevision, title, body, pinned, format))
+            if (!proceed()) throw ChurFailure(ChurStatus.VAULT_LOCKED, "the lock no longer waits for this save")
+        }
+        val saved = ChurVault.savePrivateNote(it, id, expectedRevision, title, body, pinned, format)
+        if (preserveDraft) ChurVault.writePrivateNoteDraft(it, null)
+        saved
     }
     suspend fun changePrivateNote(generation: Long, id: ByteArray, expectedRevision: Long, action: PrivateNoteAction): PrivateNote? = withNoteSession(generation) { ChurVault.changePrivateNote(it, id, expectedRevision, action) }
     suspend fun beginPrivateNoteExport(generation: Long, id: ByteArray, expectedRevision: Long, destinationFd: Int): Long = withNoteSession(generation) { ChurVault.beginPrivateNoteExport(it, id, expectedRevision, destinationFd) }
@@ -1137,7 +1152,12 @@ class VaultRepository(
      */
     private fun endSession(reason: LockReason) {
         if (session != 0L) {
-            runCatching { ChurVault.lock(session, reason) }
+            val initialReason = if (panicGeneration.value == generation) LockReason.PANIC else reason
+            runCatching { ChurVault.lock(session, initialReason) }
+            if (initialReason != LockReason.PANIC && panicGeneration.value == generation) {
+                runCatching { ChurVault.lock(session, LockReason.PANIC) }
+            }
+            panicGeneration.compareAndSet(generation, null)
             runCatching { ChurVault.closeSession(session) }
             session = 0L
         }
@@ -1200,12 +1220,12 @@ class VaultRepository(
         touch()
         result
     }
-    private suspend inline fun <T> withNoteSession(expectedGeneration: Long, body: (Long) -> T): T = mutex.withLock {
+    private suspend inline fun <T> withNoteSession(expectedGeneration: Long, noteActivity: Boolean = true, body: (Long) -> T): T = mutex.withLock {
         if (session == 0L || generation != expectedGeneration || _state.value !is VaultState.Unlocked) {
             throw ChurFailure(ChurStatus.VAULT_LOCKED, "the private note session has ended")
         }
         val result = body(session)
-        touch()
+        if (noteActivity) touch()
         result
     }
 

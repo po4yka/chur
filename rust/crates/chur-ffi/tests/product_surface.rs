@@ -1740,6 +1740,77 @@ fn caller_persisted_import_and_album_identities_survive_retry() {
 }
 
 #[test]
+fn an_encrypted_note_draft_reopens_only_after_unlock_and_panic_clears_it() {
+    use chur_ffi::private_notes::chur_private_note_attachments;
+
+    let root = scratch();
+    let runtime = open_runtime(&root);
+    let mut creation = 0;
+    let mut session = 0;
+    assert_eq!(
+        unsafe { chur_vault_create_begin(runtime, &create_request(PASSWORD), &mut creation) },
+        OK
+    );
+    assert_eq!(
+        unsafe { chur_vault_creation_activate(creation, &mut session) },
+        OK
+    );
+
+    let mut request = vec![14];
+    request.extend_from_slice(&[0; 24]); // New note.
+    request.extend_from_slice(&[0, 1]); // Unpinned Markdown.
+    request.extend_from_slice(&0u32.to_be_bytes());
+    let body = b"unsaved private note";
+    request.extend_from_slice(&(body.len() as u32).to_be_bytes());
+    request.extend_from_slice(body);
+    let mut output = vec![0; 262_434];
+    let mut call = |session, request: &[u8]| {
+        let mut written = 0;
+        let status = unsafe {
+            chur_private_note_attachments(
+                session,
+                request.as_ptr(),
+                request.len(),
+                output.as_mut_ptr(),
+                output.len(),
+                &mut written,
+            )
+        };
+        (status, output[..written].to_vec())
+    };
+
+    assert_eq!(call(session, &request).0, OK);
+    assert_eq!(unsafe { chur_vault_lock(session, 1) }, OK);
+    assert_eq!(call(session, &[13]).0, ChurStatus::VaultLocked as i32);
+    assert_eq!(unsafe { chur_session_close(session) }, OK);
+
+    let unlock = ChurUnlockRequestV1 {
+        factor: 1,
+        reserved: [0; 3],
+        secret: PASSWORD.as_ptr(),
+        secret_length: PASSWORD.len() as u32,
+    };
+    assert_eq!(
+        unsafe { chur_vault_unlock(runtime, &unlock, &mut session) },
+        OK
+    );
+    let (status, restored) = call(session, &[13]);
+    assert_eq!(status, OK);
+    assert_eq!(restored, request[1..]);
+
+    assert_eq!(unsafe { chur_vault_lock(session, 4) }, OK);
+    assert_eq!(unsafe { chur_session_close(session) }, OK);
+    assert_eq!(
+        unsafe { chur_vault_unlock(runtime, &unlock, &mut session) },
+        OK
+    );
+    assert_eq!(call(session, &[13]), (OK, Vec::new()));
+    assert_eq!(unsafe { chur_session_close(session) }, OK);
+    assert_eq!(unsafe { chur_runtime_close(runtime) }, OK);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn private_workspace_commands_are_bounded_cas_and_restore_saved_source() {
     use chur_ffi::private_notes::*;
     fn text(out: &mut Vec<u8>, value: &str) {

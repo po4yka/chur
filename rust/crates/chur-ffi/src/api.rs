@@ -481,7 +481,6 @@ pub unsafe extern "C" fn chur_vault_unlock(
 )]
 pub unsafe extern "C" fn chur_vault_lock(session: Handle, reason: u32) -> Status {
     guard_status_for(session, || {
-        let _ = reason;
         let entry = registry::get(session, Kind::Session)?;
         // Steps 1 to 4 of §8: cancel every operation and invalidate every
         // reader this session owns before the catalog closes, so no worker is
@@ -506,9 +505,15 @@ pub unsafe extern "C" fn chur_vault_lock(session: Handle, reason: u32) -> Status
         }
         let mut guard = registry::lock(guarded);
         // Steps 5, 6, and 8.
+        const PANIC_LOCK_REASON: u32 = 4;
+        let draft = if reason == PANIC_LOCK_REASON {
+            crate::private_notes::clear_draft(&guard)
+        } else {
+            Ok(())
+        };
         let result = guard.lock();
         registry::lock(publication_cache).clear();
-        result
+        result.and(draft)
     })
 }
 

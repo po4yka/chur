@@ -67,6 +67,7 @@ fun PrivateNotesRoute(
     NavigationBusyEffect(state.editor != null || state.busy || state.selection.isNotEmpty() ||
         state.confirmation != null || state.filtersVisible, onNavigationBusyChange)
     LaunchedEffect(controller, initialCreateRequest) {
+        controller.recoverDraft()
         if (initialCreateRequest != null) controller.create()
     }
     systemBack(true, controller::back)

@@ -68,6 +68,18 @@ internal class PrivateNoteWriter(size: Int) {
     fun count(value: Int) { for (shift in 24 downTo 0 step 8) byte(value ushr shift) }
     fun sized(value: ByteArray) { for (shift in 24 downTo 0 step 8) byte(value.size ushr shift); raw(value) }
 }
+/** Unsaved text from the current vault's encrypted recovery record. */
+class PrivateNoteDraft(
+    val noteId: ByteArray?,
+    val revision: Long,
+    val title: String,
+    val body: String,
+    val pinned: Boolean,
+    val format: PrivateNoteFormat,
+) {
+    override fun toString(): String = "PrivateNoteDraft(<redacted>)"
+}
+
 internal class PrivateNoteReader(private val bytes: ByteArray) {
     private var at = 0
     fun byte(): Int { require(at < bytes.size); return bytes[at++].toInt() and 255 }

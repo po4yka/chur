@@ -22,8 +22,10 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -98,6 +100,30 @@ class PrivateNoteLockSaveHostTest {
         assertEquals(note.revision, after.revision)
         assertEquals(note.body, after.body)
         assertEquals(0, controller.lockDrafts.lost)
+    }
+
+    @Test
+    fun a_revision_conflict_keeps_an_encrypted_draft_for_the_next_unlock() = runBlocking {
+        val (controller, note) = vaultWithNote()
+        val notes = openEditor(controller, note)
+        val generation = (controller.vault.state.value as VaultState.Unlocked).generation
+        val newer = controller.vault.savePrivateNote(generation, note.noteId, note.revision, note.title, "Newer revision")
+        notes.body("Text from the older editor")
+        controller.lock()
+        assertEquals(newer.body, reopened(controller, note).body)
+        val sealed = root.walkTopDown().single { it.isFile && it.name == "note-draft" }
+        assertFalse(sealed.readBytes().decodeToString().contains("Text from the older editor"))
+
+        val unlocked = (controller.vault.state.value as VaultState.Unlocked).generation
+        val editor = PrivateNotesController(controller.vault, unlocked, routeScope, {}, {})
+        editor.recoverDraft()
+        assertEquals("Text from the older editor", editor.state.value.editor?.body)
+        assertNull(editor.state.value.editor?.saved)
+        controller.panic()
+        reopened(controller, note)
+        val afterPanic = (controller.vault.state.value as VaultState.Unlocked).generation
+        assertNull(controller.vault.privateNoteDraft(afterPanic))
+        editor.close()
     }
 
     @Test

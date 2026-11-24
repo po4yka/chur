@@ -1089,6 +1089,42 @@ object ChurVault {
         } finally { labels.forEach { it.fill(0) } }
     }
 
+    fun privateNoteDraft(session: Long): PrivateNoteDraft? {
+        val bytes = attachmentControl(session, byteArrayOf(13), 16 + 8 + 2 + 8 + 256 + 262144)
+        return try {
+            if (bytes.isEmpty()) null else PrivateNoteReader(bytes).let { reader ->
+                val id = reader.raw(16).takeUnless { it.all { byte -> byte == 0.toByte() } }
+                val revision = reader.number()
+                val pin = reader.byte()
+                val format = PrivateNoteFormat.entries[reader.byte()]
+                require(revision >= 0 && (id == null) == (revision == 0L) && pin in 0..1)
+                PrivateNoteDraft(id, revision, reader.text(256), reader.text(262144), pin == 1, format)
+                    .also { reader.end() }
+            }
+        } finally { bytes.fill(0) }
+    }
+
+    fun writePrivateNoteDraft(session: Long, draft: PrivateNoteDraft?) {
+        if (draft == null) {
+            attachmentControl(session, byteArrayOf(15), 1).fill(0)
+            return
+        }
+        val title = draft.title.encodeToByteArray()
+        val body = draft.body.encodeToByteArray()
+        try {
+            require(title.size <= 256 && body.size <= 262144 && (draft.noteId == null || draft.noteId.size == 16))
+            val writer = PrivateNoteWriter(1 + 16 + 8 + 2 + 8 + title.size + body.size)
+            writer.byte(14)
+            writer.raw(draft.noteId ?: ByteArray(16))
+            writer.number(draft.revision)
+            writer.byte(if (draft.pinned) 1 else 0)
+            writer.byte(draft.format.ordinal)
+            writer.sized(title)
+            writer.sized(body)
+            attachmentControl(session, writer.bytes, 1).fill(0)
+        } finally { title.fill(0); body.fill(0) }
+    }
+
     fun privateNoteHistory(session: Long, id: ByteArray): List<PrivateNoteRevision> {
         require(id.size == 16)
         val bytes = attachmentControl(session, PrivateNoteWriter(17).apply { byte(8); raw(id) }.bytes)

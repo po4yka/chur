@@ -971,6 +971,29 @@ fn a_restore_stops_inside_a_container_rather_than_between_files() {
     assert!(destination.registry_names().unwrap().is_empty());
 }
 
+#[test]
+fn restore_cannot_publish_while_creation_holds_the_same_registry() {
+    let (_source, mut session) = new_vault();
+    let mut package = Cursor::new(Vec::new());
+    backup::create(&mut session, &mut package, NOW, &mut Uninterrupted).unwrap();
+
+    let destination = scratch_root();
+    let pending = vault::create(&destination, b"a distinct vault password", NOW).unwrap();
+    assert_eq!(
+        rejection(backup::restore(
+            &destination,
+            &mut package,
+            PASSWORD,
+            &mut Uninterrupted,
+        )),
+        ChurStatus::Conflict
+    );
+    assert!(destination.registry_names().unwrap().is_empty());
+    drop(pending.activate().unwrap());
+    backup::restore(&destination, &mut package, PASSWORD, &mut Uninterrupted).unwrap();
+    assert_eq!(destination.registry_names().unwrap().len(), 2);
+}
+
 /// A package restored beside the vault it came from is refused and leaves
 /// that vault alone.
 ///

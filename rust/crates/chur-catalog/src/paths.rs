@@ -220,6 +220,12 @@ impl VaultRoot {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
             Err(_) => bail!(IoFailure, "the registry could not be read"),
         };
+        // A live creator or restore owns its temporary descriptors.
+        let _registry_claim = match DirectoryClaim::take(&directory) {
+            Ok(claim) => claim,
+            Err(error) if error.status() == chur_core::ChurStatus::Conflict => return Ok(0),
+            Err(error) => return Err(error),
+        };
         let mut removed = 0;
         for entry in listing {
             let entry = entry

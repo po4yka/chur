@@ -80,6 +80,7 @@ pub struct VaultCreation {
     /// The claim on the vault directory, held for the life of the creation so
     /// that the orphan sweep of another runtime on this root leaves it.
     claim: DirectoryClaim,
+    registry_claim: DirectoryClaim,
 }
 
 /// The advisory lock `docs/interop/FFI_CONTRACT.md` §8.1 takes on a descriptor
@@ -277,6 +278,7 @@ pub fn create_with_params(
     let canonical = password::canonical_bytes(password)?;
     check_new_password(&canonical)?;
 
+    let registry_claim = claim_registry(root_dir)?;
     // §11: the registry holds at most two entries.
     let existing = root_dir.registry_names()?;
     ensure!(
@@ -362,6 +364,7 @@ pub fn create_with_params(
         entry_name,
         catalog,
         claim,
+        registry_claim,
     })
 }
 
@@ -403,6 +406,7 @@ impl VaultCreation {
         // Released only after the install, so a sweep that takes the claim
         // next reads a registry that names this directory.
         drop(self.claim);
+        drop(self.registry_claim);
         Ok(Session {
             root_dir: self.root_dir,
             root_secret: Some(self.root_secret),
@@ -1836,6 +1840,13 @@ pub fn open_recovery_slot_of(descriptor: &VaultDescriptor, phrase: &[u8]) -> Res
     )
 }
 
+fn claim_registry(root_dir: &VaultRoot) -> Result<DirectoryClaim> {
+    let registry = root_dir.registry();
+    std::fs::create_dir_all(&registry)
+        .map_err(|_| chur_core::err!(IoFailure, "the registry directory could not be created"))?;
+    DirectoryClaim::take(&registry)
+}
+
 /// Installs a descriptor body into the registry by atomic rename.
 ///
 /// It is the last step of `VAULT_DESCRIPTOR_V1.md` §9 and of
@@ -1849,18 +1860,18 @@ pub fn open_recovery_slot_of(descriptor: &VaultDescriptor, phrase: &[u8]) -> Res
 ///
 /// # Errors
 ///
-/// Returns [`ChurStatus::IoFailure`] when the write or the rename fails, and
-/// [`ChurStatus::Conflict`] when the registry already holds its two entries.
+/// Returns [`ChurStatus::IoFailure`] on a filesystem error and
+/// [`ChurStatus::Conflict`] if the registry is busy or the restore cannot
+/// install a distinct identity.
 pub fn install_descriptor(
     root_dir: &VaultRoot,
     entry_name: &RegistryName,
     body: &[u8],
+    vault_id: &Id,
+    credential: &[u8],
 ) -> Result<()> {
-    ensure!(
-        root_dir.registry_names()?.len() < crate::paths::REGISTRY_MAX,
-        Conflict,
-        "the registry already holds the two identities §11 admits"
-    );
+    let _registry_claim = claim_registry(root_dir)?;
+    ensure_restorable(root_dir, vault_id, credential)?;
     let temporary = root_dir.registry_temporary(entry_name);
     let installed = root_dir.registry_entry(entry_name);
     write_durably(&temporary, body)?;
@@ -2519,6 +2530,24 @@ mod tests {
         );
         drop(session);
         unlock_with_password(&root_dir, PASSWORD, 1_700_000_002_000).expect("unlock after close");
+    }
+
+    #[test]
+    fn a_pending_creation_reserves_the_registry_until_activation() {
+        let root = scratch();
+        let pending = create(&root, PASSWORD, 1_700_000_000_000).expect("first creation");
+        assert_eq!(
+            rejection(create(&root, PASSWORD, 1_700_000_000_000)),
+            ChurStatus::Conflict
+        );
+        assert_eq!(root.sweep_temporary().expect("sweep"), 0);
+        drop(pending.activate().expect("activate"));
+        assert_eq!(
+            rejection(create(&root, PASSWORD, 1_700_000_000_000)),
+            ChurStatus::Conflict
+        );
+        assert_eq!(root.registry_names().expect("registry").len(), 1);
+        std::fs::remove_dir_all(root.base()).expect("cleanup");
     }
 
     #[test]

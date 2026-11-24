@@ -1175,13 +1175,18 @@ fn restore_inner(
     // step actually has.
     let entry_name = RegistryName::random()?;
     let local_bytes = local.encode(&root_secret)?;
-    // The early check ran before the long copy; a creation or restore in
-    // another runtime may have installed an identity since.
-    if let Err(error) = vault::ensure_restorable(root_dir, &descriptor.vault_id, credential) {
-        let _ = std::fs::remove_dir_all(root_dir.vault(&store_id));
+    if let Err(error) = vault::install_descriptor(
+        root_dir,
+        &entry_name,
+        &local_bytes,
+        &descriptor.vault_id,
+        credential,
+    ) {
+        if error.status() == ChurStatus::Conflict {
+            let _ = std::fs::remove_dir_all(root_dir.vault(&store_id));
+        }
         return Err(error);
     }
-    vault::install_descriptor(root_dir, &entry_name, &local_bytes)?;
     let confirmed = (|| -> Result<()> {
         let written = std::fs::read(root_dir.registry_entry(&entry_name))
             .map_err(|_| chur_core::err!(IoFailure, "the descriptor could not be read back"))?;

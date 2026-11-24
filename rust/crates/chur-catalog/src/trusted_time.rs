@@ -5,14 +5,9 @@
 //! deadline and every expiry check uses this clock instead. It is a high-water
 //! mark in the catalog that moves forward only by time the process can justify:
 //!
-//! - within a process, by the monotonic time since the mark last moved;
-//! - for the first advance in a process, by the gap to the device clock;
-//! - never by more than [`MAX_ADVANCE_MS`] in one advance, and never backwards.
-//!
-//! The first call on a catalog with no mark takes the device clock. A forward
-//! jump therefore delays erasure (late) and can never cause it (early): the
-//! mark advances by at most the real time that passed, plus one day per
-//! process start. `docs/format/CATALOG_SCHEMA_V18.md` states the contract.
+//! The device clock initializes an empty mark. After that, only monotonic
+//! elapsed time measured in an open catalog can advance it. Time between
+//! sessions is unproven, so it cannot trigger irreversible erasure.
 
 use std::time::{Duration, Instant};
 
@@ -50,21 +45,14 @@ pub(crate) fn advance(db: &mut CatalogDb, wall_ms: u64, at: Instant) -> Result<u
         db.trusted_anchor = Some(at);
         return Ok(wall_ms);
     };
-    // A first advance has no monotonic proof, so it restarts the reference at this instant.
-    let (anchor, advance_ms, proven) = match db.trusted_anchor {
-        Some(anchor) => (anchor, millis(at.saturating_duration_since(anchor)), true),
-        None => (at, wall_ms.saturating_sub(mark), false),
-    };
-    let advance_ms = advance_ms.min(MAX_ADVANCE_MS);
+    let anchor = *db.trusted_anchor.get_or_insert(at);
+    let advance_ms = millis(at.saturating_duration_since(anchor)).min(MAX_ADVANCE_MS);
     if advance_ms < WRITE_GRANULARITY_MS {
-        // The sub-minute remainder of a first call is dropped.
-        db.trusted_anchor = Some(anchor);
         return Ok(mark);
     }
     let advanced = mark.saturating_add(advance_ms);
     write(db, advanced)?;
-    let spent = if proven { advance_ms } else { 0 };
-    db.trusted_anchor = Some(anchor + Duration::from_millis(spent));
+    db.trusted_anchor = Some(anchor + Duration::from_millis(advance_ms));
     Ok(advanced)
 }
 
@@ -164,20 +152,22 @@ mod tests {
     }
 
     #[test]
-    fn a_new_process_trusts_the_device_clock_by_one_day_at_most() {
-        let mut db = catalog();
-        advance(&mut db, START, Instant::now()).unwrap();
-        db.trusted_anchor = None;
+    fn reopening_a_catalog_cannot_accumulate_a_forward_clock_jump() {
+        let path = std::env::temp_dir().join(random::id().unwrap().to_hex());
+        let location = CatalogLocation::File(&path);
+        let root: Key = random::secret::<32>().unwrap();
+        let key = CatalogKey::derive(&root, &random::id().unwrap()).unwrap();
         let base = Instant::now();
-        assert_eq!(
-            advance(&mut db, START + 30 * DAY, base).unwrap(),
-            START + DAY
-        );
-        // The jump is not remembered: the next call measures its own elapsed time.
-        assert_eq!(
-            advance(&mut db, START + 30 * DAY, at(base, 5_000)).unwrap(),
-            START + DAY
-        );
+        {
+            let mut db = CatalogDb::open(&location, &key).unwrap();
+            open_at_current_version(&mut db, 1).unwrap();
+            assert_eq!(advance(&mut db, START, base).unwrap(), START);
+        }
+        for _ in 0..30 {
+            let mut db = CatalogDb::open(&location, &key).unwrap();
+            assert_eq!(advance(&mut db, START + 30 * DAY, base).unwrap(), START);
+        }
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

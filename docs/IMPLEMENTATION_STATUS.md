@@ -24,7 +24,7 @@ The previous service transport has been removed. There is no account or backend 
 | Audio artwork | embedded covers are bounded, normalized, and encrypted during media import. Existing missing covers are not automatically rebuilt. [Contract](product/AUDIO_ARTWORK.md) |
 | Private notes | local explicit-save editor, title/body search, pinning, Trash, UTF-8 export, full backup, and selective archives. Notes do not sync or enter collection sharing. [Contract](product/PRIVATE_NOTES.md) |
 | Content search | foreground local text extraction and English/Russian image/PDF OCR. Text and FTS stay in SQLCipher. No semantic search, network OCR, or automatic background indexing. [Contract](product/CONTENT_SEARCH.md) |
-| Full backup | CHURBAK1 full backup/restore with existing portable credentials; device-bound slots do not travel. The catalog portability gap is stated below. [Format](format/BACKUP_FORMAT_V1.md) |
+| Full backup | Portable backup v2 stores the catalog and encrypted originals. Restore also reads v1. Device-bound slots do not travel. [Format](format/BACKUP_FORMAT_V2.md) |
 | Selective archives | independent password and keys for selected originals, album subtrees, and saved private notes. Restore as a separate vault or import fresh copies. [Contract](product/SELECTIVE_ENCRYPTED_EXPORT.md) |
 | External encryption | Public Settings or Vault Settings encrypts selected external files into CHURBAK1 without library import or a required local vault. [Contract](product/EXTERNAL_FILE_ENCRYPTION.md) |
 | Share to Chur | Android SEND/SEND_MULTIPLE and an iOS Share Extension receive files, media, text, and URLs; normal authentication and destination confirmation precede import. Links are stored as text. [Contract](product/INCOMING_SHARES.md) |
@@ -45,9 +45,9 @@ The previous service transport has been removed. There is no account or backend 
 
 | Domain | Current value |
 | --- | --- |
-| Catalog | v15 (`0x000f`); sequential authenticated migrations from supported older schemas |
-| Native ABI | 2.24; query capabilities before opening the runtime |
-| Object container, descriptor, key-slot, backup | existing v1 formats; see the [constant registry](format/CANONICAL_ENCODING_V1.md#15-constant-registry) |
+| Catalog | v19 (`0x0013`); sequential authenticated migrations from supported older schemas |
+| Native ABI | 7.4; query capabilities before opening the runtime |
+| Object container, descriptor, key-slot | see the [constant registry](format/CANONICAL_ENCODING_V1.md#15-constant-registry) |
 | Android | minimum API 29, compile/target API 37; arm64-v8a and x86_64 |
 | iOS | minimum 18.0; arm64 device and arm64 simulator; UIKit host plus Share Extension |
 
@@ -61,7 +61,7 @@ The [five P2 corrections](assurance/P2_CORRECTIONS_2026-10-17.md) cover external
 
 The implementation work ran Rust workspace tests, clippy, and formatting; Android host tests, APK/lint checks, and focused emulator tests; Kotlin/Native tests and framework/device compilation; Swift helper tests; and a whole iOS app/extension build. The incoming-share flow also ran through Safari's real simulator Share sheet, encrypted staging, normal unlock, confirmation, and text viewing. These observations apply to the tested feature checkout, not to every provider or physical device.
 
-CI runs Rust, vectors, fuzz smoke, policy checks, shared host/native tests, and Android application checks. It does not run Android instrumentation or compile/test the Swift application and extension. A linked Kotlin framework does not prove that the containing iOS app works.
+CI runs Rust, vectors, fuzz smoke, policy checks, shared host/native tests, and Android application checks. Its macOS job builds the iOS app and extension for the simulator and runs Swift helper tests. Android instrumentation and signed iOS distribution builds require separate checks.
 
 Still open:
 

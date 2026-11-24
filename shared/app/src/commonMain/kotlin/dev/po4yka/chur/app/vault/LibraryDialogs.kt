@@ -302,8 +302,8 @@ fun DeleteSelectionDialog(count: Int, onDelete: () -> Unit, onDismiss: () -> Uni
                 "Copies exported elsewhere are not affected."
             permanent -> "This removes Chur's local keys and encrypted objects for these $count items. " +
                 "Copies exported elsewhere are not affected."
-            count == 1 -> "Chur keeps this item for 30 days so you can restore it."
-            else -> "Chur keeps these $count items for 30 days so you can restore them."
+            count == 1 -> "Chur keeps this item for at least 30 days so you can restore it."
+            else -> "Chur keeps these $count items for at least 30 days so you can restore them."
         }) },
         confirmButton = {
             if (permanent) {

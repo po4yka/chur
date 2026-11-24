@@ -10,7 +10,7 @@ A gate item is enforced by continuous integration, by a named review procedure, 
 
 The workflow exists and runs those four jobs. It also runs the vector-set check, the C ABI harness, the fuzz smoke pass, and the Gradle and Kotlin/Native test jobs, which joined it as their subjects landed. Its file is still named `rust.yml` because ADR-0031 named it when Rust was the only build. A gate item that one of them covers is enforced from the first pull request they ran on; every other item is still enforced by a named review procedure or by nothing, and every gated release records which of its items had no enforcing job. A contributor may run the equivalent command locally and attach its output to a pull request; that attachment is evidence for that pull request and is never recorded as a passed gate. A pull request whose every change is a top-level Markdown file or a file under `docs/` runs only `cargo fmt`, `cargo clippy`, `cargo test`, `cargo deny`, `vendored skills`, and `android backup rules`; the `changed paths` job skips the other jobs, which no such change can affect because no build, test, or script reads those paths. A new push to a pull request cancels the run on its earlier head; a push to `main` is never cancelled, so every `main` commit keeps its full run and its release candidate. A push to `main` runs every job.
 
-The Swift host and embedded Share Extension build, and the Swift package helper tests, are gate items with no enforcing job. The Kotlin/Native job links the shared framework, but no job compiles `apps/iosApp` (`ChurApp.swift`, `Info.plist`, and the checked-in `Chur.xcodeproj`), so a host change can break the iOS app while every job passes. Until an Xcode job joins the workflow, every gated release records this item, and the check is `xcodebuild -project apps/iosApp/Chur.xcodeproj -scheme Chur -configuration Debug -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build`, as [`../../apps/iosApp/README.md`](../../apps/iosApp/README.md) describes.
+The macOS CI job builds the Swift host and embedded Share Extension for the iOS Simulator and runs the Swift package helper tests. This build uses simulator settings with signing disabled. Distribution signing and entitlements still require archive inspection.
 
 ## Current feature acceptance
 
@@ -23,7 +23,7 @@ Files, private notes, selective archives, external encryption, OCR, public camer
 - iOS app/extension archive inspection with the registered App Group on both distribution profiles; simulator ad-hoc signing is insufficient;
 - public-shell backup and no-private-data leakage checks, and a neutral Android tile that cannot unlock or reveal an identity.
 
-[Development](../../DEVELOPMENT.md) gives local checks. No CI job currently executes Android instrumentation, Swift package tests, or the full Xcode app/extension build. Physical-device provider, key-slot, camera, performance, and interoperability checks remain separate.
+[Development](../../DEVELOPMENT.md) gives local checks. CI does not execute Android instrumentation. Physical-device provider, key-slot, camera, performance, and interoperability checks remain separate.
 
 ## Gate 0 — design prototype
 

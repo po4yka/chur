@@ -204,7 +204,7 @@ enum VaultAction {
     },
     /// Permanently erase every object in trash.
     EmptyTrash,
-    /// Scan every object and report its verdict.
+    /// Check active-library originals and report known corrupt objects.
     Verify,
     /// Unlock with the recovery phrase in `CHUR_RECOVERY_PHRASE` and set a new
     /// password, `docs/security/RECOVERY.md`.

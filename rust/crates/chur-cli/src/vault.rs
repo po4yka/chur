@@ -302,19 +302,7 @@ pub fn export_object(session: &Session, object_id: &Id, destination: &Path) -> R
 
 /// Scans every object and prints its verdict.
 pub fn verify(session: &mut Session) -> Result<()> {
-    let objects: Vec<Id> = {
-        let mut all = Vec::new();
-        let mut query = ObjectQuery::timeline();
-        loop {
-            let result = page(session.catalog_ref()?, &query)?;
-            all.extend(result.objects.iter().map(|row| row.object_id));
-            let Some(cursor) = result.next_cursor else {
-                break;
-            };
-            query.cursor = Some(cursor);
-        }
-        all
-    };
+    let objects = store::integrity_scan_targets(session.catalog_ref()?)?;
     let mut verified = 0usize;
     let mut problems = 0usize;
     for object_id in &objects {

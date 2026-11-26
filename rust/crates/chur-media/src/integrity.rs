@@ -57,6 +57,14 @@ pub fn scan_object_with(
     now_ms: u64,
     progress: &mut impl Progress,
 ) -> Result<ScanOutcome> {
+    let object = store::object(session.catalog_ref()?, object_id)?;
+    if object.state == ObjectState::Corrupt {
+        return Ok(ScanOutcome {
+            object_id: *object_id,
+            state: object.state,
+            integrity_summary: object.integrity_summary,
+        });
+    }
     let streams = store::streams(session.catalog_ref()?, object_id)?;
     let Some(original) = streams
         .iter()

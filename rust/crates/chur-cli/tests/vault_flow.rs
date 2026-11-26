@@ -168,6 +168,9 @@ fn the_whole_vault_flow_runs_from_the_command_line() {
         "{}",
         stdout(&verified)
     );
+    let repeated = run(&root, "a replacement password", &["verify"]);
+    assert!(!repeated.status.success());
+    assert!(stdout(&repeated).contains("1 with a problem"));
     let listed = expect_ok(
         &run(&root, "a replacement password", &["list"]),
         "list after corruption",

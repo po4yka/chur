@@ -1201,17 +1201,7 @@ fn run_scan(
         Some(object_id) => vec![object_id],
         None => {
             let session = registry::lock(guarded);
-            let mut all = Vec::new();
-            let mut query = chur_catalog::query::ObjectQuery::timeline();
-            loop {
-                let page = chur_catalog::query::page(session.catalog_ref()?, &query)?;
-                all.extend(page.objects.iter().map(|row| row.object_id));
-                let Some(cursor) = page.next_cursor else {
-                    break;
-                };
-                query.cursor = Some(cursor);
-            }
-            all
+            chur_catalog::store::integrity_scan_targets(session.catalog_ref()?)?
         }
     };
     // `docs/ERROR_MODEL.md` "Integrity states versus errors": each target

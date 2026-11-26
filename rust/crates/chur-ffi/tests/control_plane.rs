@@ -732,6 +732,10 @@ fn a_scan_that_proves_corruption_checks_every_object_and_ends_object_corrupt() {
     let (status, processed) = scan_every_object(session);
     assert_eq!(status, ChurStatus::ObjectCorrupt.as_i32());
     assert_eq!(processed, 2, "every target was checked");
+    assert_eq!(
+        scan_every_object(session),
+        (ChurStatus::ObjectCorrupt.as_i32(), 2)
+    );
 
     // `docs/format/CATALOG_SCHEMA_V1.md` §16.2: the corrupt row is in no scope,
     // and the healthy one was verified rather than left behind.

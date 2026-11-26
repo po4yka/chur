@@ -1039,6 +1039,26 @@ pub fn object_id_reserved(db: &CatalogDb, object_id: &Id) -> Result<bool> {
         .map_err(|error| map_sqlite(error, "the import identity could not be checked"))
 }
 
+/// Lists original objects for verification, including quarantined and known corrupt rows.
+/// Trashed and deleted objects are outside the active-library integrity scan.
+pub fn integrity_scan_targets(db: &CatalogDb) -> Result<Vec<Id>> {
+    let mut statement = db
+        .connection()
+        .prepare("SELECT object_id FROM objects WHERE state IN (?1, ?2) ORDER BY object_id")
+        .map_err(|e| map_sqlite(e, "the integrity inventory could not be prepared"))?;
+    let rows = statement
+        .query_map(
+            [ObjectState::Active.value(), ObjectState::Corrupt.value()],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .map_err(|e| map_sqlite(e, "the integrity inventory could not be read"))?;
+    rows.map(|row| {
+        let bytes = row.map_err(|e| map_sqlite(e, "the integrity object could not be read"))?;
+        crate::row::id(&bytes, "the integrity object ID is malformed")
+    })
+    .collect()
+}
+
 /// Reads one object row.
 pub fn object(db: &CatalogDb, object_id: &Id) -> Result<Object> {
     db.connection()

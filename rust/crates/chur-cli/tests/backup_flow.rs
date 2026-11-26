@@ -80,14 +80,25 @@ fn a_package_written_by_the_cli_restores_through_the_cli() {
     let object = imported.trim().to_owned();
 
     let package = scratch.join("vault.churbak");
+    let neighbor = package.with_extension("churbak.partial");
+    std::fs::write(&neighbor, b"unrelated existing file").unwrap();
     let written = expect_ok(
         &run("backup", &source, &["create", package.to_str().unwrap()]),
         "backup create",
     );
     assert!(written.contains("1 stream(s)"), "summary was: {written}");
     assert!(package.exists());
-    // §7: the partial neighbour does not survive a completed write.
-    assert!(!package.with_extension("churbak.partial").exists());
+    assert_eq!(
+        std::fs::read(&neighbor).unwrap(),
+        b"unrelated existing file"
+    );
+    let saved = std::fs::read(&package).unwrap();
+    assert!(
+        !run("backup", &source, &["create", package.to_str().unwrap()])
+            .status
+            .success()
+    );
+    assert_eq!(std::fs::read(&package).unwrap(), saved);
 
     let shown = expect_ok(
         &run("backup", &source, &["inspect", package.to_str().unwrap()]),

@@ -13,7 +13,7 @@ use std::path::Path;
 
 use chur_catalog::paths::VaultRoot;
 use chur_catalog::vault::Session;
-use chur_core::{Result, ensure};
+use chur_core::Result;
 use chur_media::backup;
 use chur_media::progress::Uninterrupted;
 
@@ -21,34 +21,11 @@ use crate::vault::now_ms;
 
 /// Writes a full package of the unlocked vault, §5 and §7.
 ///
-/// The package is written to a temporary neighbour and renamed into place.
-/// §7's last step finalizes atomically where the destination supports it, and a
-/// rename inside one directory is the form that support takes on a local
-/// filesystem: a crash leaves the temporary file rather than a package that
-/// looks complete and is not.
+/// Publish the durable package only while the destination name is free.
 pub fn create(session: &mut Session, destination: &Path) -> Result<()> {
-    ensure!(
-        !destination.exists(),
-        Conflict,
-        "the destination already exists; a package is never written over one"
-    );
-    let temporary = destination.with_extension("churbak.partial");
-    let mut file = std::fs::File::create(&temporary)
-        .map_err(|_| chur_core::err!(IoFailure, "the package could not be created"))?;
-
-    let summary = match backup::create(session, &mut file, now_ms(), &mut Uninterrupted) {
-        Ok(summary) => summary,
-        Err(error) => {
-            drop(file);
-            let _ = std::fs::remove_file(&temporary);
-            return Err(error);
-        }
-    };
-    file.sync_all()
-        .map_err(|_| chur_core::err!(IoFailure, "the package could not be made durable"))?;
-    drop(file);
-    std::fs::rename(&temporary, destination)
-        .map_err(|_| chur_core::err!(IoFailure, "the package could not be finalized"))?;
+    let summary = crate::output::write_new(destination, |file| {
+        backup::create(session, file, now_ms(), &mut Uninterrupted)
+    })?;
 
     println!(
         "backup {} of vault {}",

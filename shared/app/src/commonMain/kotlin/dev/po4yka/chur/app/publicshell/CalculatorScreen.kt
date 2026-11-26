@@ -78,7 +78,7 @@ fun CalculatorScreen(onOpenSettings: () -> Unit, modifier: Modifier = Modifier, 
             expression = when (key) {
                 CalculatorKey.CLEAR -> ""
                 CalculatorKey.BACKSPACE -> expression.dropLast(1)
-                CalculatorKey.SIGN -> if (expression.startsWith('-')) expression.drop(1) else "-$expression"
+                CalculatorKey.SIGN -> ScientificCalculator.toggleOperandSign(expression)
                 else -> (expression + if (key == CalculatorKey.DECIMAL) decimal else key.symbol).take(512)
             }
         } else {

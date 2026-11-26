@@ -4,6 +4,37 @@ import kotlin.math.*
 
 /** A bounded expression parser. No scripting engine, identifiers or executable input. */
 object ScientificCalculator {
+    private val trailingAtom = Regex("""(?:[0-9.,]+(?:e[+−-]?[0-9]*)?|[a-zA-Zπ]+)$""")
+
+    internal fun toggleOperandSign(expression: String): String {
+        var end = expression.trimEnd().length
+        if (expression.getOrNull(end - 1) == '%') end = expression.take(end - 1).trimEnd().length
+        val start = if (expression.getOrNull(end - 1) == ')') {
+            var depth = 1
+            var open = end - 1
+            while (open > 0 && depth > 0) {
+                when (expression[--open]) {
+                    ')' -> depth++
+                    '(' -> depth--
+                }
+            }
+            if (depth != 0) return expression
+            val prefix = expression.take(open).trimEnd()
+            if (prefix.lastOrNull()?.isLetter() == true) prefix.indexOfLast { !it.isLetter() } + 1 else open
+        } else {
+            val decimal = publicDecimalSeparator().singleOrNull() ?: '.'
+            trailingAtom.find(expression.take(end).replace(decimal, '.'))?.range?.first ?: end
+        }
+        val prefix = expression.take(start).trimEnd()
+        if (prefix.endsWith('-') || prefix.endsWith('−')) {
+            val beforeMinus = prefix.dropLast(1).trimEnd().lastOrNull()
+            if (beforeMinus == null || beforeMinus in "(+-−*/×÷^") {
+                return expression.removeRange(prefix.lastIndex, prefix.length)
+            }
+        }
+        return if (expression.length < 512) expression.replaceRange(start, start, "-") else expression
+    }
+
     fun evaluate(expression: String, degrees: Boolean): String {
         require(expression.isNotBlank() && expression.length <= 512) { "Enter an expression" }
         val parser = Parser(expression.replace(publicDecimalSeparator(), ".").replace(',', '.').replace('×', '*').replace('÷', '/').replace('−', '-'), degrees)

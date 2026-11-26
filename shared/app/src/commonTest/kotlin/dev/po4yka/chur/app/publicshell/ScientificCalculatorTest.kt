@@ -3,6 +3,20 @@ package dev.po4yka.chur.app.publicshell
 import kotlin.test.*
 
 class ScientificCalculatorTest {
+    @Test fun signChangesOnlyTheOperandAtTheEndOfTheExpression() {
+        for ((input, result) in listOf("2+3" to "-1", "2−3" to "5", "2^3" to "0.125",
+            "2+sqrt(4*(2+2))" to "-2", "2+(3+4)" to "-5", "2+50%" to "1.5",
+            "2+1e-3" to "1.999", "1,5 + 2,5 " to "-1", "2+pi" to "-1.14159265359")) {
+            val toggled = ScientificCalculator.toggleOperandSign(input)
+            assertEquals(result, ScientificCalculator.evaluate(toggled, true), input)
+            assertEquals(input, ScientificCalculator.toggleOperandSign(toggled), input)
+        }
+        assertEquals("2+ 3", ScientificCalculator.toggleOperandSign("2+ −3"))
+        assertEquals("2+-", ScientificCalculator.toggleOperandSign("2+"))
+        assertEquals("", ScientificCalculator.toggleOperandSign("-"))
+        val full = "1".padStart(512)
+        assertEquals(full, ScientificCalculator.toggleOperandSign(full))
+    }
     @Test fun precedenceAndParentheses() {
         assertEquals("14", ScientificCalculator.evaluate("2+3*4", true))
         assertEquals("20", ScientificCalculator.evaluate("(2+3)*4", true))

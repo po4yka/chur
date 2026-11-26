@@ -35,7 +35,15 @@ public final class IncomingShareFixtureProvider extends ContentProvider {
             ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
             new Thread(() -> {
                 try (ParcelFileDescriptor.AutoCloseOutputStream output = new ParcelFileDescriptor.AutoCloseOutputStream(pipe[1])) {
-                    output.write(sourceBytes(source));
+                    if ("slow-archive".equals(source.getLastPathSegment())) {
+                        output.write("CHURBAK1".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+                        for (int i = 0; i < 300; i++) {
+                            android.os.SystemClock.sleep(100);
+                            output.write(0);
+                        }
+                    } else {
+                        output.write(sourceBytes(source));
+                    }
                 } catch (IOException ignored) { /* A cancelled reader closes its pipe. */ }
             }).start();
             return pipe[0];

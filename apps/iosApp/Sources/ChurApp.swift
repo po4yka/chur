@@ -473,6 +473,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             guard self.exportGeneration == generation, let url = urls.first else { request.cancelled(); return }
             let selection = DocumentImportSelection(urls: [url])
             self.documentSelections.add(selection)
+            request.beginOpening(cancel: selection.close)
             // A full backup can contain many individually bounded media objects.
             selection.load(index: 0, maxBytes: Int64.max) { source in
                 DispatchQueue.main.async { [weak self] in

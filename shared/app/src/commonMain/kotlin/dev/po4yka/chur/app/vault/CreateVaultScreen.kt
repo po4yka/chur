@@ -464,6 +464,7 @@ private fun PhraseGrid(words: List<String>) {
 @Composable
 fun RestoreBackupScreen(
     busy: Boolean,
+    preparing: Boolean,
     error: String?,
     cancelled: Boolean,
     operation: ActiveOperation? = null,
@@ -472,13 +473,14 @@ fun RestoreBackupScreen(
     onCancel: () -> Unit = {},
 ) {
     CompositionLocalProvider(LocalSaveableStateRegistry provides null) {
-        RestoreArchiveContent(busy, error, cancelled, operation, onChoose, onBack, onCancel)
+        RestoreArchiveContent(busy, preparing, error, cancelled, operation, onChoose, onBack, onCancel)
     }
 }
 
 @Composable
 private fun RestoreArchiveContent(
     busy: Boolean,
+    preparing: Boolean,
     error: String?,
     cancelled: Boolean,
     operation: ActiveOperation?,
@@ -526,10 +528,12 @@ private fun RestoreArchiveContent(
                     enabled = !busy && password.isNotEmpty(),
                     modifier = Modifier.fillMaxWidth().guideTarget("restore", !busy && password.isNotEmpty()),
                 ) {
-                    Text(if (busy) "Restoring" else "Choose backup file")
+                    Text(if (preparing) "Opening backup file" else if (busy) "Restoring" else "Choose backup file")
                 }
                 if (operation != null) {
                     OperationProgressCard(operation, onCancel)
+                } else if (preparing) {
+                    TextButton(onClick = onCancel) { Text("Cancel") }
                 }
                 TextButton(onClick = onBack, enabled = !busy) { Text("Back") }
             }

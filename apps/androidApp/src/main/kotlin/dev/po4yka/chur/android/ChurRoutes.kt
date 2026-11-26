@@ -478,7 +478,7 @@ private fun RestoreRoute(controller: ChurController) {
                         running = false
                     } else {
                         val hold = controller.retainArchiveCredential(credential)
-                        val job = stagingScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                        val job = stagingScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
                             var source: ArchiveSource? = null
                             var transferred = false
                             try {
@@ -491,7 +491,10 @@ private fun RestoreRoute(controller: ChurController) {
                                 }
                                 transferred = true
                             } catch (failure: kotlinx.coroutines.CancellationException) {
-                                cancelled = true
+                                if (controller.route.value == AppRoute.RestoreBackup) {
+                                    cancelled = true
+                                    controller.report("Cancelled.")
+                                }
                                 throw failure
                             } catch (_: Exception) {
                                 controller.report("That file could not be opened.")
@@ -505,9 +508,10 @@ private fun RestoreRoute(controller: ChurController) {
                                 staging = null
                             }
                         }
-                        staging = job
-                        hold.attach(job)
-                        job.start()
+                        if (job.isActive) {
+                            staging = job
+                            hold.attach(job)
+                        }
                     }
                 }
             }
@@ -516,7 +520,7 @@ private fun RestoreRoute(controller: ChurController) {
     val back = { controller.goTo(if (controller.vaultState.value is VaultState.NoVault) AppRoute.CreateVault else AppRoute.PublicShell) }
     BackHandler { if (!running) back() }
     RestoreBackupScreen(
-        busy = running, error = formError, cancelled = cancelled, operation = operation,
+        busy = running, preparing = staging != null, error = formError, cancelled = cancelled, operation = operation,
         onChoose = { entered ->
             pending?.clear()
             pending = ArchiveCredential(entered)
@@ -532,7 +536,10 @@ private fun RestoreRoute(controller: ChurController) {
                 controller.report("The file picker could not be opened.")
             }
         },
-        onBack = back, onCancel = { staging?.cancel(); controller.cancelActiveOperation() },
+        onBack = back, onCancel = {
+            val job = staging
+            if (job != null) job.cancel() else controller.cancelActiveOperation()
+        },
     )
 }
 

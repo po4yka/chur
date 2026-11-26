@@ -199,9 +199,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             guard pairingScratchReady, let scene = self?.scene else { _ = answer(nil); return }
             scene.presentApprovalExport(path, answer: answer)
         }
-        IosBackupPicker.shared.present = { [weak self] answer in
-            guard let scene = self?.scene else { _ = answer(nil); return }
-            scene.presentBackupPicker(answer)
+        IosBackupPicker.shared.present = { [weak self] request in
+            guard let scene = self?.scene else { request.openFailed(); return }
+            scene.presentBackupPicker(request)
         }
         IosAlbumExportPicker.shared.present = { [weak self] answer in
             guard let scene = self?.scene else { _ = answer(nil); return }
@@ -460,26 +460,27 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         root.present(picker, animated: true)
     }
 
-    func presentBackupPicker(_ answer: @escaping (ArchiveSource?) -> KotlinUnit) {
+    func presentBackupPicker(_ request: IosArchivePickRequest) {
         guard let presenter = window?.rootViewController, presenter.presentedViewController == nil else {
-            _ = answer(nil); return
+            request.openFailed(); return
         }
         let generation = exportGeneration
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.data], asCopy: false)
         let delegate = DocumentPickerDelegate { [weak self] urls in
-            guard let self else { _ = answer(nil); return }
+            guard let self else { request.cancelled(); return }
             self.documentPicker = nil
             self.documentPickerController = nil
-            guard self.exportGeneration == generation, let url = urls.first else { _ = answer(nil); return }
+            guard self.exportGeneration == generation, let url = urls.first else { request.cancelled(); return }
             let selection = DocumentImportSelection(urls: [url])
             self.documentSelections.add(selection)
             // A full backup can contain many individually bounded media objects.
             selection.load(index: 0, maxBytes: Int64.max) { source in
                 DispatchQueue.main.async { [weak self] in
-                    guard let source, self?.exportGeneration == generation else {
-                        source?.close(); _ = answer(nil); return
+                    guard self?.exportGeneration == generation else {
+                        source?.close(); request.cancelled(); return
                     }
-                    _ = answer(ArchiveSource(descriptor: source.descriptor, close: source.close))
+                    guard let source else { request.openFailed(); return }
+                    request.opened(source: ArchiveSource(descriptor: source.descriptor, close: source.close))
                 }
             }
         }

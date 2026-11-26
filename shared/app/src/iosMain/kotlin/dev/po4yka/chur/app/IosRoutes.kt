@@ -1057,7 +1057,10 @@ private fun VaultRoute(controller: ChurController, vaultState: VaultState) {
                 choosingArchiveImport = false
                 archiveTransfers.import(ArchiveCredential(password)) {
                     val present = IosBackupPicker.present ?: error("the file picker is unavailable")
-                    present(archiveTransfers::importedFile)
+                    present(IosArchivePickRequest { source, error ->
+                        archiveTransfers.importedFile(source)
+                        if (error != null && modalSessionCurrent()) controller.report(error)
+                    })
                 }
             }, onDismiss = { choosingArchiveImport = false })
     }
@@ -1897,11 +1900,14 @@ private fun IosRestoreRoute(controller: ChurController) {
                 controller.beginHostActivity()
                 pickerOpen = true
                 try {
-                    present { source ->
+                    present(IosArchivePickRequest { source, error ->
                         val credential = pending
                         pending = null
                         if (pickerOpen) { pickerOpen = false; controller.endHostActivity() }
-                        if (source == null || credential == null) {
+                        if (error != null && credential != null && controller.route.value == AppRoute.RestoreBackup) {
+                            controller.report(error)
+                        }
+                        if (source == null || credential == null || controller.route.value != AppRoute.RestoreBackup) {
                             credential?.clear()
                             source?.close?.invoke()
                             running = false
@@ -1912,7 +1918,7 @@ private fun IosRestoreRoute(controller: ChurController) {
                                 cancelled = wasCancelled
                             }
                         }
-                    }
+                    })
                 } catch (_: Exception) {
                     pending?.clear(); pending = null
                     pickerOpen = false; controller.endHostActivity()
@@ -1926,9 +1932,9 @@ private fun IosRestoreRoute(controller: ChurController) {
     )
 }
 
-/** The host delivers a coordinated archive source, or null when the picker is dismissed. */
+/** The host answers each archive request on the main thread. */
 public object IosBackupPicker {
-    public var present: ((answer: (ArchiveSource?) -> Unit) -> Unit)? = null
+    public var present: ((IosArchivePickRequest) -> Unit)? = null
 }
 
 /** The host keeps a selected folder grant and returns one transient opaque token. */

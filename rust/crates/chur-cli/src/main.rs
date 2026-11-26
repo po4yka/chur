@@ -13,6 +13,7 @@
 mod backup;
 mod bench;
 mod manifest;
+mod output;
 mod vault;
 mod vectors;
 
@@ -163,7 +164,7 @@ enum VaultAction {
     Export {
         /// The object identifier.
         object: String,
-        /// The destination path.
+        /// A new destination path. An existing file is preserved.
         destination: PathBuf,
     },
     /// Write a plaintext range to standard output.

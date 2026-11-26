@@ -117,6 +117,37 @@ fn the_whole_vault_flow_runs_from_the_command_line() {
     );
     assert_eq!(std::fs::read(&destination).unwrap(), bytes);
 
+    std::fs::write(&destination, b"previous file").unwrap();
+    let destination_path = destination.to_str().unwrap();
+    assert!(
+        !run(&root, PASSWORD, &["export", &object, destination_path])
+            .status
+            .success()
+    );
+    assert_eq!(std::fs::read(&destination).unwrap(), b"previous file");
+    let absent = base.join("absent.bin");
+    assert!(
+        !run(
+            &root,
+            PASSWORD,
+            &[
+                "export",
+                "11111111111111111111111111111111",
+                absent.to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
+    assert!(!absent.exists());
+    assert!(!std::fs::read_dir(&base).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".partial")
+    }));
+
     // A range read returns the same bytes as the file at that offset.
     let read = run(
         &root,

@@ -286,18 +286,15 @@ fn summary_name(value: u8) -> &'static str {
 
 /// Exports one object to a path.
 pub fn export_object(session: &Session, object_id: &Id, destination: &Path) -> Result<u64> {
-    let mut file = std::fs::File::create(destination)
-        .map_err(|_| chur_core::err!(IoFailure, "the destination could not be created"))?;
-    let written = export::export_stream(
-        session,
-        object_id,
-        StreamKind::Original,
-        &mut file,
-        &mut chur_media::progress::Uninterrupted,
-    )?;
-    file.flush()
-        .map_err(|_| chur_core::err!(IoFailure, "the destination could not be flushed"))?;
-    Ok(written)
+    crate::output::write_new(destination, |file| {
+        export::export_stream(
+            session,
+            object_id,
+            StreamKind::Original,
+            file,
+            &mut chur_media::progress::Uninterrupted,
+        )
+    })
 }
 
 /// Scans every object and prints its verdict.

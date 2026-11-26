@@ -11,6 +11,13 @@ class ScientificCalculatorTest {
         assertEquals("0.25", ScientificCalculator.evaluate("2^-2", true))
         assertEquals("0.3", ScientificCalculator.evaluate("0,1+0,2", true))
     }
+    @Test fun percentAppliesToThePrecedingOperandBeforeExponentiation() {
+        assertEquals("0.05", ScientificCalculator.evaluate("(2+3)%", true))
+        assertEquals("0.03", ScientificCalculator.evaluate("sqrt(9)%", true))
+        assertEquals("1", ScientificCalculator.evaluate("sin(π%*50)", false))
+        assertEquals("0.25", ScientificCalculator.evaluate("50%^2", true))
+        assertFailsWith<IllegalArgumentException> { ScientificCalculator.evaluate("5%%", true) }
+    }
     @Test fun scientificFunctionsAndAngleModes() {
         assertEquals("1", ScientificCalculator.evaluate("sin(90)", true))
         assertEquals("1", ScientificCalculator.evaluate("sin(pi/2)", false))

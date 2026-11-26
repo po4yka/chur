@@ -32,7 +32,11 @@ object ScientificCalculator {
             require(++depth <= 64) { "Expression is too deeply nested" }
             try { return when { take('+') -> unary(); take('-') -> -unary(); else -> power() } } finally { depth-- }
         }
-        fun power(): Double { val value = atom(); return if (take('^')) checked(value.pow(unary())) else value }
+        fun power(): Double {
+            val operand = atom()
+            val base = if (take('%')) operand / 100 else operand
+            return if (take('^')) checked(base.pow(unary())) else base
+        }
         fun atom(): Double {
             if (take('(')) { val value = sum(); require(take(')')) { "Close the parenthesis" }; return value }
             space()
@@ -62,7 +66,7 @@ object ScientificCalculator {
                 while (index < source.length && source[index].isDigit()) index++
             }
             val number = source.substring(start, index).toDoubleOrNull() ?: throw IllegalArgumentException("Enter a number")
-            return checked(if (take('%')) number / 100 else number)
+            return checked(number)
         }
     }
 }

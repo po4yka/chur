@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
@@ -62,6 +63,44 @@ class PrivateNoteLockSaveHostTest {
         notes.body("Edited before the lock")
         controller.lock()
         assertEquals("Edited before the lock", reopened(controller, note).body)
+    }
+
+    @Test
+    fun confirming_trash_discards_the_checkpoint_but_keeps_the_saved_note_in_trash() = runBlocking {
+        val (controller, note) = vaultWithNote()
+        val notes = openEditor(controller, note)
+        val generation = (controller.vault.state.value as VaultState.Unlocked).generation
+        notes.body("Discard this edit")
+        withTimeout(10_000) {
+            while (controller.vault.privateNoteDraft(generation)?.body != "Discard this edit") delay(10)
+        }
+        notes.requestTrash()
+        notes.trash()
+        withTimeout(10_000) { notes.state.first { it.editor == null && !it.busy } }
+        notes.close()
+
+        val trashed = controller.vault.privateNote(generation, note.noteId)
+        assertNotNull(trashed.trashedAtMs)
+        assertEquals("Saved body", trashed.body)
+        val reopened = PrivateNotesController(controller.vault, generation, routeScope, {}, {})
+        reopened.recoverDraft()
+        assertNull(reopened.state.value.editor)
+        reopened.close()
+    }
+
+    @Test
+    fun a_trash_conflict_preserves_the_editors_checkpoint() = runBlocking {
+        val (controller, note) = vaultWithNote()
+        val notes = openEditor(controller, note)
+        val generation = (controller.vault.state.value as VaultState.Unlocked).generation
+        notes.body("Keep this edit")
+        controller.vault.savePrivateNote(generation, note.noteId, note.revision, note.title, "Newer version")
+        notes.requestTrash()
+        notes.trash()
+        withTimeout(10_000) { notes.state.first { it.error != null && !it.busy } }
+        assertEquals("Keep this edit", controller.vault.privateNoteDraft(generation)?.body)
+        assertNull(controller.vault.privateNote(generation, note.noteId).trashedAtMs)
+        notes.close()
     }
 
     @Test

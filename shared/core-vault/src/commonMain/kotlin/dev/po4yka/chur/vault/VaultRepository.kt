@@ -430,6 +430,23 @@ class VaultRepository(
         saved
     }
     suspend fun changePrivateNote(generation: Long, id: ByteArray, expectedRevision: Long, action: PrivateNoteAction): PrivateNote? = withNoteSession(generation) { ChurVault.changePrivateNote(it, id, expectedRevision, action) }
+
+    /** The editor explicitly discards its checkpoint when the user confirms Trash. */
+    suspend fun trashPrivateNoteFromEditor(generation: Long, id: ByteArray, expectedRevision: Long): PrivateNote? =
+        withNoteSession(generation) { session ->
+            val draft = ChurVault.privateNoteDraft(session)?.takeIf {
+                it.noteId?.contentEquals(id) == true && it.revision == expectedRevision
+            }
+            // Clear first so an interruption after the move cannot recover discarded text.
+            if (draft != null) ChurVault.writePrivateNoteDraft(session, null)
+            try {
+                ChurVault.changePrivateNote(session, id, expectedRevision, PrivateNoteAction.TRASH)
+            } catch (failure: ChurFailure) {
+                if (draft != null) ChurVault.writePrivateNoteDraft(session, draft)
+                throw failure
+            }
+        }
+
     suspend fun beginPrivateNoteExport(generation: Long, id: ByteArray, expectedRevision: Long, destinationFd: Int): Long = withNoteSession(generation) { ChurVault.beginPrivateNoteExport(it, id, expectedRevision, destinationFd) }
     suspend fun privateNoteAttachments(generation: Long, id: ByteArray): List<PrivateNoteAttachment> = withNoteSession(generation) { ChurVault.privateNoteAttachments(it,id) }
     suspend fun readPrivateNoteAttachment(generation: Long, id: ByteArray, attachmentId: ByteArray): ByteArray = withNoteSession(generation) { ChurVault.readPrivateNoteAttachment(it,id,attachmentId) }

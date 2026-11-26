@@ -199,14 +199,17 @@ fun NotesScreen(
                     keyboardActions = KeyboardActions(onSearch = { onSubmitSearch() }),
                     modifier = Modifier.fillMaxWidth().padding(horizontal = ChurSpacing.gutter),
                     colors = churOutlinedTextFieldColors())
+                val source = if (trash) trashedNotes else notes
+                val visible = NoteOrganization.filter(Notes.search(source, query), folder.takeIf { it.isNotEmpty() }, tag.takeIf { it.isNotEmpty() })
                 if (selecting && !trash) {
+                    val selectedNotes = visible.filter { it.id in selection }
                     FlowRow {
-                        TextButton(onClick = { selection = notes.map { it.id }.toSet() }) { Text(utilityText("Select all", "Выбрать все")) }
+                        TextButton(onClick = { selection = visible.map { it.id }.toSet() }) { Text(utilityText("Select all", "Выбрать все")) }
                         listOf(true to "Pin", false to "Unpin", null to "Trash").forEach { (pin, label) ->
-                            TextButton(enabled = selection.isNotEmpty() && !packageBusy, onClick = {
+                            TextButton(enabled = selectedNotes.isNotEmpty() && !packageBusy, onClick = {
                                 packageBusy = true
                                 scope.launch {
-                                    try { onBulkAction(notes.filter { it.id in selection }, pin); selection = emptySet(); selecting = false; packageFailed = false }
+                                    try { onBulkAction(selectedNotes, pin); selection = emptySet(); selecting = false; packageFailed = false }
                                     catch (cancelled: CancellationException) { throw cancelled }
                                     catch (_: Exception) { packageFailed = true }
                                     finally { packageBusy = false }
@@ -216,14 +219,12 @@ fun NotesScreen(
                         TextButton(onClick = { selecting = false; selection = emptySet() }) { Text(utilityText("Done", "Готово")) }
                     }
                 }
-                val source = if (trash) trashedNotes else notes
                 if (source.isEmpty() && !trash) {
                     EmptyNotes(hasQuery = false, onCreate = {
                         onQueryChange("")
                         onCreate()
                     })
                 } else {
-                    val visible = NoteOrganization.filter(Notes.search(source, query), folder.takeIf { it.isNotEmpty() }, tag.takeIf { it.isNotEmpty() })
                     if (visible.isEmpty()) {
                         if (trash) Text(utilityText("Trash is empty or no notes match these filters.", "Корзина пуста или нет заметок по этим фильтрам."), modifier = Modifier.padding(ChurSpacing.gutter))
                         else EmptyNotes(hasQuery = true)

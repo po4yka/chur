@@ -137,6 +137,25 @@ class PublicShellPresentationTest {
     }
 
     @Test
+    fun selecting_all_notes_only_applies_the_bulk_action_to_search_results() {
+        val orchid = dev.po4yka.chur.notes.Note("a", "Orchid", "", 1)
+        val pine = dev.po4yka.chur.notes.Note("b", "Pine", "", 2)
+        var affected = emptyList<String>()
+        present(scale = 1f, content = {
+            NotesScreen(notes = listOf(orchid, pine), query = "Orchid", onQueryChange = {},
+                onBulkAction = { notes, _ -> affected = notes.map { it.id } },
+                onOpen = {}, onCreate = {}, onOpenSettings = {})
+        }) { f ->
+            assertTrue(f.await { f.has("Orchid") })
+            assertFalse(f.has("Pine"))
+            f.hold("Orchid")
+            f.click("Select all")
+            f.click("Pin")
+            assertEquals(listOf("a"), affected)
+        }
+    }
+
+    @Test
     fun notes_keep_search_and_settings_without_brand_controls() {
         val query = mutableStateOf("")
         present(content = { NotesScreen(notes = emptyList(), query = query.value, onQueryChange = { query.value = it }, onOpen = {}, onCreate = {}, onOpenSettings = {}, showFirstWriteDisclosure = false) }) { f ->

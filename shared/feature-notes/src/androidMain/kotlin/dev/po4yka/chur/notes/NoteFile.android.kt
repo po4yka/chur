@@ -3,7 +3,10 @@ package dev.po4yka.chur.notes
 import java.io.File
 import java.io.IOException
 import java.nio.channels.FileChannel
+import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.BasicFileAttributes
 
 internal actual fun readNoteFile(path: String): String? {
     return readNoteBlob(path, NoteState.MAX_STORE_BYTES)?.decodeToString(throwOnInvalidSequence = true)
@@ -22,8 +25,12 @@ internal actual fun writeNoteFile(path: String, text: String) {
 
 internal actual fun readNoteBlob(path: String, maxBytes: Int): ByteArray? {
     val file = File(path)
-    if (!file.exists()) return null
-    require(file.isFile && file.length() <= maxBytes) { "attachment content is too large" }
+    val attributes = try {
+        Files.readAttributes(file.toPath(), BasicFileAttributes::class.java)
+    } catch (_: NoSuchFileException) {
+        return null
+    }
+    require(attributes.isRegularFile && attributes.size() <= maxBytes) { "attachment content is too large" }
     return file.inputStream().use { input ->
         val output = java.io.ByteArrayOutputStream()
         val buffer = ByteArray(8192)

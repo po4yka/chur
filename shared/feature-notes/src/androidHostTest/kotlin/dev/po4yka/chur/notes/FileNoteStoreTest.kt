@@ -65,6 +65,26 @@ class FileNoteStoreTest {
         assertTrue(!File(path).exists())
     }
 
+    @Test
+    fun a_failed_file_lookup_retries_before_the_next_write() = runTest {
+        val parent = File(directory, "public")
+        val parked = File(directory, "parked")
+        val notesPath = File(parent, "notes.json").path
+        val original = Note("a", "Saved", "original", 1)
+        val next = Note("b", "New", "second", 2)
+        assertTrue(parent.mkdir())
+        FileNoteStore(notesPath).put(original)
+        assertTrue(parent.renameTo(parked))
+        assertTrue(parent.createNewFile())
+
+        val store = FileNoteStore(notesPath)
+        assertFailsWith<IOException> { store.all() }
+        assertTrue(parent.delete())
+        assertTrue(parked.renameTo(parent))
+        store.put(next)
+        assertEquals(setOf(original, next), FileNoteStore(notesPath).all().toSet())
+    }
+
     /**
      * An unreadable file must not be replaced by the next write. Reporting the
      * failure keeps whatever is in the file; answering "empty" would delete it

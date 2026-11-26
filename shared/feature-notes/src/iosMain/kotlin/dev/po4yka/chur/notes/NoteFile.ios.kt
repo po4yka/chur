@@ -3,12 +3,18 @@
 package dev.po4yka.chur.notes
 
 import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.alloc
+import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.ptr
 import kotlinx.cinterop.usePinned
 import platform.Foundation.NSData
 import platform.Foundation.create
 import platform.Foundation.dataWithContentsOfFile
 import platform.Foundation.writeToFile
+import platform.posix.ENOENT
+import platform.posix.errno
 import platform.posix.memcpy
+import platform.posix.stat
 
 internal actual fun readNoteFile(path: String): String? {
     return readNoteBlob(path, NoteState.MAX_STORE_BYTES)?.decodeToString(throwOnInvalidSequence = true)
@@ -39,10 +45,14 @@ internal actual fun writeNoteFile(path: String, text: String) {
 }
 
 internal actual fun readNoteBlob(path: String, maxBytes: Int): ByteArray? {
-    val manager = platform.Foundation.NSFileManager.defaultManager
-    val attributes = manager.attributesOfItemAtPath(path, null) ?: return null
-    val size = (attributes[platform.Foundation.NSFileSize] as? platform.Foundation.NSNumber)?.longLongValue
-        ?: error("cannot read attachment size")
+    val size = memScoped {
+        val info = alloc<stat>()
+        if (stat(path, info.ptr) != 0) {
+            if (errno == ENOENT) return null
+            error("cannot read note file attributes")
+        }
+        info.st_size
+    }
     require(size in 0..maxBytes.toLong()) { "attachment content is too large" }
     val data = NSData.dataWithContentsOfFile(path) ?: error("cannot read attachment content")
     require(data.length <= maxBytes.toULong()) { "attachment content is too large" }

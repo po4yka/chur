@@ -267,7 +267,7 @@ pub fn local_identity(
     };
     ensure!(
         !envelope.is_recovery_only(),
-        CatalogCorrupt,
+        RecoveryRequired,
         "the active identity is recovery-only"
     );
     let device_id = *envelope.device_id();

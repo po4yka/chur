@@ -96,7 +96,13 @@ fn production_local_identity_backs_up_and_restores_without_replacing_the_live_si
     let destination = scratch_root();
     backup::restore(&destination, &mut package, PASSWORD, &mut Uninterrupted)
         .expect("actual restore");
-    let restored = vault::unlock_with_password(&destination, PASSWORD, NOW + 2).unwrap();
+    let mut restored = vault::unlock_with_password(&destination, PASSWORD, NOW + 2).unwrap();
+    // The mobile sync coordinator requests the ordinary identity on the first unlock.
+    let error =
+        sync_receive::provision_local_identity(restored.catalog().unwrap(), &root, vault_id)
+            .err()
+            .expect("a restored device must pair before it can sign");
+    assert_eq!(error.status(), chur_core::ChurStatus::RecoveryRequired);
     let membership = sync_membership::load(restored.catalog_ref().unwrap())
         .unwrap()
         .unwrap();

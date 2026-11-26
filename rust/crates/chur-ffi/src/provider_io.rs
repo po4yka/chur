@@ -6,7 +6,7 @@
 //! duplicate of this endpoint that could clear O_NONBLOCK.
 
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::FileTypeExt;
 use std::time::{Duration, Instant};
@@ -71,6 +71,18 @@ pub(crate) fn require_regular(file: &File) -> Result<()> {
         metadata.is_file(),
         InvalidInput,
         "this operation requires a regular file"
+    );
+    Ok(())
+}
+
+/// An archive starts at byte zero and must occupy the whole destination.
+pub(crate) fn require_archive_output(file: &mut File) -> Result<()> {
+    require_regular(file)?;
+    chur_core::ensure!(
+        file.stream_position().is_ok_and(|position| position == 0)
+            && file.metadata().is_ok_and(|m| m.len() == 0),
+        InvalidInput,
+        "the archive destination must be empty and at offset zero"
     );
     Ok(())
 }

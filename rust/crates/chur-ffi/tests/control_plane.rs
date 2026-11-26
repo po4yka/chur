@@ -1372,6 +1372,36 @@ fn seekable_backup_apis_reject_provider_pipes_before_starting_workers() {
         }),
         ChurStatus::InvalidInput
     );
+    let path = root.join("archive-output");
+    let mut output = std::fs::File::create(&path).unwrap();
+    let mut request = vec![1];
+    request.extend_from_slice(&u32::try_from(PASSWORD.len()).unwrap().to_be_bytes());
+    request.extend_from_slice(PASSWORD);
+    request.extend_from_slice(&[0; 12]); // empty object, album and note lists
+    request.extend_from_slice(&4096_u64.to_be_bytes());
+    for (length, offset) in [(1, 0), (0, 1)] {
+        output.set_len(length).unwrap();
+        output.seek(std::io::SeekFrom::Start(offset)).unwrap();
+        let fd = descriptor(&output);
+        assert_eq!(
+            status(unsafe { chur_ffi::product::chur_backup_create(session, fd, &mut operation) }),
+            ChurStatus::InvalidInput
+        );
+        assert_eq!(
+            status(unsafe {
+                chur_ffi::selective::chur_selective_export_begin(
+                    session,
+                    request.as_ptr(),
+                    u32::try_from(request.len()).unwrap(),
+                    fd,
+                    &mut operation,
+                )
+            }),
+            ChurStatus::InvalidInput
+        );
+        assert_eq!(output.metadata().unwrap().len(), length);
+        assert_eq!(output.stream_position().unwrap(), offset);
+    }
     assert_eq!(operation, 0);
     assert_eq!(unsafe { chur_runtime_close(runtime) }, OK);
     std::fs::remove_dir_all(root).unwrap();

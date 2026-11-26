@@ -16,7 +16,7 @@ use chur_core::{Result, ensure};
 use chur_media::{backup, import};
 use std::{
     fs::File,
-    io::{Read, Seek},
+    io::Read,
     path::{Path, PathBuf},
 };
 use zeroize::Zeroizing;
@@ -467,17 +467,7 @@ pub unsafe extern "C" fn chur_external_archive_begin(
             inputs.push(unsafe { api::duplicate_descriptor(fd)? });
         }
         let mut output = unsafe { api::duplicate_descriptor(destination_fd)? };
-        crate::provider_io::require_regular(&output)?;
-        ensure!(
-            output.stream_position().is_ok_and(|position| position == 0),
-            InvalidInput,
-            "the archive destination must be seekable at offset zero"
-        );
-        ensure!(
-            output.metadata().is_ok_and(|m| m.len() == 0),
-            InvalidInput,
-            "the archive destination must be empty"
-        );
+        crate::provider_io::require_archive_output(&mut output)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;

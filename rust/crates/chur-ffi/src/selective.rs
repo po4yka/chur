@@ -660,8 +660,12 @@ unsafe fn begin(
         let bytes = unsafe { api::borrow_bytes(request, length)? };
         let request = decode(bytes, export)?;
         let entry = registry::get(session, Kind::Session)?;
-        let descriptor = unsafe { api::duplicate_descriptor(fd)? };
-        crate::provider_io::require_regular(&descriptor)?;
+        let mut descriptor = unsafe { api::duplicate_descriptor(fd)? };
+        if export {
+            crate::provider_io::require_archive_output(&mut descriptor)?;
+        } else {
+            crate::provider_io::require_regular(&descriptor)?;
+        }
         let owner = Access::Shared {
             handle: session,
             entry,

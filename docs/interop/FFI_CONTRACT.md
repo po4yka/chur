@@ -443,7 +443,7 @@ chur_status_t chur_backup_restore(chur_handle_t runtime, int32_t source_fd,
 
 Three things differ from the §6.2 operations and each follows from the format.
 
-Both descriptors must be **seekable** as well as open. §7 writes the public preamble before the records and learns the record count only after the inventory pass, and §8 walks record headers before it reads a payload. A pipe is therefore neither a destination nor a source, and an application that uploads a package writes it to a file and uploads that file.
+Backup creation requires an empty regular file at offset zero. Both descriptors must be **seekable** as well as open. §7 writes the public preamble before the records and learns the record count only after the inventory pass, and §8 walks record headers before it reads a payload. A pipe is therefore neither a destination nor a source, and an application that uploads a package writes it to a file and uploads that file.
 
 `chur_backup_restore` takes the **runtime** rather than a session. A restore installs an identity, so at the moment it runs there may be no session and no vault at all; §8 step 2 obtains the credential from the package's own portable descriptor. The operation belongs to the runtime, so §14's runtime close tears it down and §4's session lock does not, because there is no session to lock.
 
@@ -710,7 +710,7 @@ A file is attachment ID, filename string, MIME string, data bytes. Read requires
 
 ### 6.26 Selective encrypted archives, ABI 2.22
 
-`chur_selective_export_begin` and `chur_selective_import_begin` take a session handle, request byte range and length, a host file descriptor, and an output operation handle. Export requires a writable destination; import requires a readable, seekable source. Native code duplicates the descriptor. The host keeps ownership of its own descriptor. Requests are at most 65536 bytes. The caller must supply a writable output handle and valid, non-overlapping request memory under the normal C pointer contract.
+`chur_selective_export_begin` and `chur_selective_import_begin` take a session handle, request byte range and length, a host file descriptor, and an output operation handle. Export requires an empty, writable regular file at offset zero. Import requires a readable, seekable source. Native code duplicates the descriptor. The host keeps ownership of its own descriptor. Requests are at most 65536 bytes. The caller must supply a writable output handle and valid, non-overlapping request memory under the normal C pointer contract.
 
 All integers are big endian. Both requests start with version u8 = 1 and a password field (u32 byte count, then UTF-8). The password follows the existing password profile and has at most 1024 bytes. Export then contains object count u32 + 16-byte identifiers, album count u32 + 16-byte identifiers, note count u32 + pairs of 16-byte identifier and expected revision u64, and maximum output bytes u64. Each explicit count is at most 1000. Import has no fields after the password. Unknown versions, extra bytes, invalid identifiers or revisions, and out-of-range fields fail closed. The host clears the encoded request after the call; native ownership uses zeroizing password storage.
 

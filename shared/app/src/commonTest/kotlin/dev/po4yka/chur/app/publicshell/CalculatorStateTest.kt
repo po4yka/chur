@@ -32,6 +32,20 @@ class CalculatorStateTest {
     }
 
     @Test
+    fun inserting_a_number_replaces_the_operand_and_preserves_the_pending_operation() {
+        val pending = type("2").press(CalculatorKey.ADD)
+        val pasted = assertNotNull(pending.replaceOperand("3"))
+        assertEquals("2 + 3", pasted.calculationExpression)
+        assertEquals("5", pasted.press(CalculatorKey.EQUALS).display)
+        val replacement = assertNotNull(pasted.replaceOperand("01234567"))
+        assertEquals("2 +", replacement.pendingExpression)
+        assertEquals("1234569", replacement.press(CalculatorKey.EQUALS).display)
+        assertNull(pasted.replaceOperand("NaN"))
+        val newEntry = assertNotNull(pasted.press(CalculatorKey.EQUALS).replaceOperand("4"))
+        assertEquals("4", newEntry.press(CalculatorKey.EQUALS).display)
+    }
+
+    @Test
     fun percent_is_relative_for_addition_and_subtraction_and_a_fraction_for_multiplication() {
         val plus = type("10", type("200").press(CalculatorKey.ADD)).press(CalculatorKey.PERCENT)
         assertEquals("20", plus.display)

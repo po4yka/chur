@@ -107,7 +107,7 @@ fun CalculatorScreen(onOpenSettings: () -> Unit, modifier: Modifier = Modifier, 
                 ListItem(headlineContent = { Text(row.result) }, supportingContent = { Text(row.expression) }, trailingContent = {
                     Row {
                         TextButton(onClick = {
-                            if (scientific) expression = row.result else basic = CalculatorState.fromNumber(row.result) ?: CalculatorState()
+                            if (scientific) expression = row.result else basic = basic.replaceOperand(row.result) ?: basic
                             directEntry = ""; showingHistory = false
                         }) { Text(utilityText("Use", "Вставить")) }
                         TextButton(onClick = {
@@ -156,7 +156,7 @@ fun CalculatorScreen(onOpenSettings: () -> Unit, modifier: Modifier = Modifier, 
                     TextButton(onClick = { clipboard.setText(AnnotatedString(result)) }) { Text(utilityText("Copy", "Копировать")) }
                     TextButton(onClick = {
                         val text = clipboard.getText()?.text.orEmpty().trim()
-                        val parsed = CalculatorState.fromNumber(text)
+                        val parsed = basic.replaceOperand(text)
                         if (parsed == null) message = utilityText("Paste a finite number.", "Вставьте конечное число.")
                         else { if (scientific) expression = if (PublicUtilityStore.validCode(text)) text else parsed.display else basic = parsed; directEntry = text.takeIf(PublicUtilityStore::validCode).orEmpty() }
                     }) { Text(utilityText("Paste", "Вставить")) }

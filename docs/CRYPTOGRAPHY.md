@@ -11,7 +11,7 @@ The central rule is:
 
 > **Rust owns the private cryptographic lifecycle. Android Keystore and iOS Keychain gate access to short root-key material. Kotlin, Compose, SwiftUI, UIKit, Room, DataStore, media players, and network clients never become independent owners of the vault protocol.**
 
-This branch implements the internal post-quantum profile with native ABI 8.4. It requires MLKEM768-X25519 for recipient encryption and ML-DSA-65 for device signatures. The classical v1 sections below document the earlier protocol. Public release requires independent review and device acceptance. [Internal profile](adr/0073-internal-post-quantum-profile.md) · [Release gates](assurance/RELEASE_GATES.md)
+This branch implements the internal post-quantum profile with native ABI 8.4. It requires MLKEM768-X25519 for recipient encryption and ML-DSA-65 for device signatures. The classical v1 sections below document the earlier protocol. Before public release, check compatibility with the final hybrid HPKE specification and complete device acceptance. [Internal profile](adr/0073-internal-post-quantum-profile.md) · [Release gates](assurance/RELEASE_GATES.md)
 
 ---
 

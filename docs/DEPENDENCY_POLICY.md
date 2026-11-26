@@ -148,7 +148,7 @@ A skill synchronisation updates both hashes and the commit, and the checker is w
 
 ### Internal post-quantum prototype
 
-ADR-0073 authorizes the mlkem feature of rust-hpke 0.15.1 and RustCrypto ml-dsa 0.1.2 for this internal build. Cargo.lock pins ml-kem 0.3.4, x-wing 0.1.1 and module-lattice 0.2.4. Preserve the MIT or Apache-2.0 license notices. Rust owns the keys on all targets. Pure Rust implementations avoid a new native cryptography toolchain and an OS-version split at iOS 18. Apple CryptoKit and the Go standard library provide independent implementations for interoperability testing. A dependency update requires advisory, feature and license review, independent vectors and a mobile build. Independent review of the selected implementations and protocol is open. [Decision and release conditions](adr/0073-internal-post-quantum-profile.md)
+ADR-0073 authorizes the mlkem feature of rust-hpke 0.15.1 and RustCrypto ml-dsa 0.1.2 for this internal build. Cargo.lock pins ml-kem 0.3.4, x-wing 0.1.1 and module-lattice 0.2.4. Preserve the MIT or Apache-2.0 license notices. Rust owns the keys on all targets. Pure Rust implementations avoid a new native cryptography toolchain and an OS-version split at iOS 18. Apple CryptoKit and the Go standard library provide independent implementations for interoperability testing. A dependency update requires advisory, feature and license review, independent vectors and a mobile build. Disclose the audit status of the selected implementations in the profile documentation. [Decision and release conditions](adr/0073-internal-post-quantum-profile.md)
 
 ## Ktor Client 3.5.2, shared sync transport
 

@@ -27,7 +27,7 @@ Files, private notes, selective archives, external encryption, OCR, public camer
 
 ## Internal post-quantum profile
 
-The native handshake identifies the experimental profile. A release application stops before it opens a vault that uses this build. To change this decision, record the final hybrid HPKE specification, the provider version and its independent review, and the results of an independent review of the Chur protocol. On physical Android and iPhone devices, confirm enrollment in both directions, grant exchange, history synchronization, revocation, backup recovery and incoming shares. Record cold and warm latency, peak memory, installed size and the size of the verification payload. Include the minimum supported OS versions. [Profile and dependencies](../adr/0073-internal-post-quantum-profile.md)
+The native handshake identifies the experimental profile. A release application stops before it opens a vault that uses this build. To change this decision, record the final hybrid HPKE specification, the provider version and the interoperability test results for that version. An external cryptographic audit is optional for this profile. On physical Android and iPhone devices, confirm enrollment in both directions, grant exchange, history synchronization, revocation, backup recovery and incoming shares. Record cold and warm latency, peak memory, installed size and the size of the verification payload. Include the minimum supported OS versions. [Profile and dependencies](../adr/0073-internal-post-quantum-profile.md)
 
 ## Gate 0 — design prototype
 

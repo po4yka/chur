@@ -610,13 +610,13 @@ fn recipient_public_key(bytes: &[u8; RECIPIENT_LEN]) -> Result<<XWing as KemTrai
     })
 }
 
-#[cfg(feature = "test-vectors")]
+#[cfg(any(test, feature = "test-vectors"))]
 pub(crate) struct FixedTestRng {
     bytes: [u8; 64],
     offset: usize,
 }
 
-#[cfg(feature = "test-vectors")]
+#[cfg(any(test, feature = "test-vectors"))]
 impl FixedTestRng {
     pub(crate) const fn new(bytes: [u8; 64]) -> Self {
         Self { bytes, offset: 0 }
@@ -630,7 +630,7 @@ impl FixedTestRng {
     }
 }
 
-#[cfg(feature = "test-vectors")]
+#[cfg(any(test, feature = "test-vectors"))]
 impl hpke::rand_core::TryRng for FixedTestRng {
     type Error = hpke::rand_core::Infallible;
 
@@ -652,7 +652,7 @@ impl hpke::rand_core::TryRng for FixedTestRng {
     }
 }
 
-#[cfg(feature = "test-vectors")]
+#[cfg(any(test, feature = "test-vectors"))]
 impl hpke::rand_core::TryCryptoRng for FixedTestRng {}
 
 fn grant_info(context: &[u8]) -> Vec<u8> {
@@ -728,6 +728,72 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 
     use super::*;
+
+    #[test]
+    fn hybrid_hpke_matches_draft_05_appendix_a5() {
+        use chur_crypto::post_quantum::recipient_public;
+        use hpke::{aead::Aead, kdf::Kdf};
+
+        let vector: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../test-vectors/internal-pq/hpke-pq-05-a5.json"
+        ))
+        .unwrap();
+        let bytes = |field: &serde_json::Value| hex::decode(field.as_str().unwrap()).unwrap();
+        assert_eq!(vector["mode"], 0);
+        assert_eq!(vector["kem_id"], XWing::KEM_ID);
+        assert_eq!(vector["kdf_id"], HkdfSha256::KDF_ID);
+        assert_eq!(vector["aead_id"], ChaCha20Poly1305::AEAD_ID);
+
+        let (sk, pk) = XWing::derive_keypair(&bytes(&vector["ikmR"]));
+        let seed = Key::new(bytes(&vector["skRm"]).try_into().unwrap());
+        let public = bytes(&vector["pkRm"]).try_into().unwrap();
+        assert_eq!(sk.to_bytes().as_slice(), seed.expose());
+        assert_eq!(pk.to_bytes().as_slice(), &public);
+        assert_eq!(recipient_public(&seed).unwrap(), public);
+        let recipient = recipient_public_key(&public).unwrap();
+
+        let info = bytes(&vector["info"]);
+        let mut rng = FixedTestRng::new(bytes(&vector["ikmE"]).try_into().unwrap());
+        let (enc, mut sender) = hpke::setup_sender_with_rng::<ChaCha20Poly1305, HkdfSha256, XWing>(
+            &OpModeS::Base,
+            &recipient,
+            &info,
+            &mut rng,
+        )
+        .unwrap();
+        let expected_enc = bytes(&vector["enc"]).try_into().unwrap();
+        validate_encapsulation(&expected_enc).unwrap();
+        assert_eq!(enc.to_bytes().as_slice(), &expected_enc);
+        let secret = XWing::decap(&sk, None, &enc).unwrap();
+        assert_eq!(secret.0.as_slice(), bytes(&vector["shared_secret"]));
+        let mut receiver = hpke::setup_receiver::<ChaCha20Poly1305, HkdfSha256, XWing>(
+            &OpModeR::Base,
+            &sk,
+            &enc,
+            &info,
+        )
+        .unwrap();
+
+        for record in vector["encryptions"].as_array().unwrap() {
+            let (pt, aad, ct) = (
+                bytes(&record["pt"]),
+                bytes(&record["aad"]),
+                bytes(&record["ct"]),
+            );
+            assert_eq!(sender.seal(&pt, &aad).unwrap(), ct);
+            assert_eq!(receiver.open(&ct, &aad).unwrap(), pt);
+        }
+        for export in vector["exports"].as_array().unwrap() {
+            let context = bytes(&export["exporter_context"]);
+            let expected = bytes(&export["exported_value"]);
+            let mut output = vec![0; export["L"].as_u64().unwrap().try_into().unwrap()];
+            sender.export(&context, &mut output).unwrap();
+            assert_eq!(output, expected);
+            output.fill(0);
+            receiver.export(&context, &mut output).unwrap();
+            assert_eq!(output, expected);
+        }
+    }
 
     #[test]
     fn key_purpose_separates_identical_public_bytes() {

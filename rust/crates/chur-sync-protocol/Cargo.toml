@@ -17,5 +17,9 @@ chur-format.workspace = true
 hpke.workspace = true
 zeroize.workspace = true
 
+[dev-dependencies]
+hex.workspace = true
+serde_json.workspace = true
+
 [lints]
 workspace = true

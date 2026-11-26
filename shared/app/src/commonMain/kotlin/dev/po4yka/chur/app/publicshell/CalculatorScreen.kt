@@ -48,9 +48,10 @@ fun CalculatorScreen(onOpenSettings: () -> Unit, modifier: Modifier = Modifier, 
     val decimal = publicDecimalSeparator()
     fun record(row: Calculation) {
         if (showFirstWriteDisclosure && !acceptedDisclosure) { pendingHistory = row; return }
-        val next = (listOf(row) + history).take(500)
-        try { store.saveHistory(next); history = next; message = null }
-        catch (_: Exception) { message = utilityText("History could not be saved. Your result is still available.", "Не удалось сохранить историю. Результат остаётся на экране.") }
+        try {
+            history = store.appendCalculation(row)
+            message = null
+        } catch (_: Exception) { message = utilityText("History could not be saved. Your result is still available.", "Не удалось сохранить историю. Результат остаётся на экране.") }
     }
     fun submit() {
         val candidate = if (scientific) expression else directEntry.takeIf {

@@ -222,6 +222,36 @@ class PublicShellPresentationTest {
     }
 
     @Test
+    fun calculator_keeps_history_after_a_failed_initial_read() {
+        val files = mutableMapOf<String, String>()
+        val prior = dev.po4yka.chur.app.publicshell.Calculation("2 + 3", "5")
+        val next = dev.po4yka.chur.app.publicshell.Calculation("1 + 1", "2")
+        val persisted = dev.po4yka.chur.app.publicshell.PublicUtilityStore(files::get, files::put)
+        persisted.saveHistory(listOf(prior))
+        var failFirstRead = true
+        val store = dev.po4yka.chur.app.publicshell.PublicUtilityStore(read = { key ->
+            if (key == "calculator" && failFirstRead) {
+                failFirstRead = false
+                throw java.io.IOException("History is temporarily unavailable")
+            }
+            files[key]
+        }, write = files::put)
+        present(content = {
+            CompositionLocalProvider(dev.po4yka.chur.app.publicshell.LocalPublicUtilities provides store) {
+                CalculatorScreen(onOpenSettings = {})
+            }
+        }) { f ->
+            assertTrue(f.await { f.has("History is unavailable. Its saved data has not been changed.") })
+            f.click("1")
+            f.click("Add")
+            f.click("1")
+            f.click("Equals")
+            assertTrue(f.await { f.has("Calculator result: 2") })
+            assertEquals(listOf(next, prior), persisted.history())
+        }
+    }
+
+    @Test
     fun calculator_consumes_exact_code_only_on_equals_without_history() {
         var entries = 0
         present(content = { CalculatorScreen(onOpenSettings = {}, onSubmitCode = { if (it == "01234567") { entries++; true } else false }) }) { f ->

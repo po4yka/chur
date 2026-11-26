@@ -62,8 +62,15 @@ class PublicUtilityStore(
                 .also { row -> require(row.expression.length <= 512 && row.result.length <= 64) }
         }
     }
+    internal fun appendCalculation(row: Calculation): List<Calculation> =
+        (listOf(row) + history()).take(500).also(::writeHistory)
+
     fun saveHistory(items: List<Calculation>) {
         history() // Never overwrite unknown versions or corrupt data.
+        writeHistory(items)
+    }
+
+    private fun writeHistory(items: List<Calculation>) {
         require(items.size <= 500 && items.all { it.expression.length <= 512 && it.result.length <= 64 })
         val encoded = buildJsonObject {
             put("version", 1)

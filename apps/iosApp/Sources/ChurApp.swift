@@ -479,9 +479,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                     guard let source, self?.exportGeneration == generation else {
                         source?.close(); _ = answer(nil); return
                     }
-                    _ = answer(ArchiveSource(descriptor: source.descriptor, close: {
-                        source.close(); return KotlinUnit()
-                    }))
+                    _ = answer(ArchiveSource(descriptor: source.descriptor, close: source.close))
                 }
             }
         }

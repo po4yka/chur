@@ -638,7 +638,7 @@ fun NoteEditorScreen(open: OpenNote, onSave: (Note) -> Unit, onRemove: (String) 
                             } finally { bytes.fill(0); attachmentBusy = false }
                         }
                     }, onFailure = { attachmentFailed = true })
-                PublicNoteBinaryExportAction(noteExportFilename(title, true).removeSuffix(".md") + ".churnote",
+                PublicNoteBinaryExportAction(notePackageExportFilename(title),
                     "application/vnd.chur.note+json", enabled = !exit.requested && !attachmentBusy,
                     label = "Export note package", load = { onExportPackage(requireNotNull(currentDraftNote())) },
                     onFailure = { attachmentFailed = true })

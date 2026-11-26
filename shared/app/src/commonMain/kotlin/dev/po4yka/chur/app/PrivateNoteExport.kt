@@ -4,6 +4,7 @@ import dev.po4yka.chur.ffi.PrivateNote
 import dev.po4yka.chur.ffi.PrivateNoteFormat
 import dev.po4yka.chur.ffi.PrivateNoteAttachment
 import dev.po4yka.chur.app.notes.noteExportFilename
+import dev.po4yka.chur.app.notes.notePackageExportFilename
 
 /** A session-bound export reference. It holds no note body or plaintext file path. */
 class PrivateNoteExportRequest private constructor(
@@ -26,7 +27,7 @@ class PrivateNoteExportRequest private constructor(
         }
         fun from(note: PrivateNote, generation: Long): PrivateNoteExportRequest = PrivateNoteExportRequest(
             note.noteId.copyOf(), note.revision, generation,
-            if (note.attachmentCount > 0) noteExportFilename(safeExportName(note.title, "private-note"), true).removeSuffix(".md") + ".churnote"
+            if (note.attachmentCount > 0) notePackageExportFilename(safeExportName(note.title, "private-note"))
             else noteExportFilename(safeExportName(note.title, "private-note"), note.format == PrivateNoteFormat.MARKDOWN), note.exportSize,
             if (note.attachmentCount > 0) "application/octet-stream" else if (note.format == PrivateNoteFormat.MARKDOWN) "text/markdown" else "text/plain",
         )

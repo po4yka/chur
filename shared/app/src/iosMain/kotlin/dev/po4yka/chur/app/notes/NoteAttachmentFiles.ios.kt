@@ -73,12 +73,12 @@ actual fun PublicNoteBinaryExportAction(filename: String, mimeType: String, enab
     var pending by remember { mutableStateOf(false) }
     DisposableEffect(Unit) { onDispose { alive = false; presentation.clear() } }
     TextButton(enabled = enabled && !pending, onClick = {
-        dev.po4yka.chur.notes.NoteAttachments.validateName(filename)
         pending = true
         val directory = NSTemporaryDirectory() + "chur-public-note-" + NSUUID().UUIDString
         scope.launch {
             var bytes: ByteArray? = null
             try {
+                dev.po4yka.chur.notes.NoteAttachments.validateName(filename)
                 bytes = loader()
                 presentation.temporaryDirectory = directory
                 val path = "$directory/$filename"

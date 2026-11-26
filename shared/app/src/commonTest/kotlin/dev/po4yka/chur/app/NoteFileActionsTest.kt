@@ -5,6 +5,7 @@ import dev.po4yka.chur.app.notes.NotePickerActivityLease
 import dev.po4yka.chur.app.notes.decodeMarkdownNote
 import dev.po4yka.chur.app.notes.publicNoteExportBytes
 import dev.po4yka.chur.app.notes.noteExportFilename
+import dev.po4yka.chur.app.notes.notePackageExportFilename
 import dev.po4yka.chur.app.notes.truncateNoteTitle
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -70,6 +71,8 @@ class NoteFileActionsTest {
         assertEquals("bad_name.md", noteExportFilename("bad/name", true))
         assertEquals("Note.txt", noteExportFilename("..", false))
         assertTrue(noteExportFilename("😀".repeat(100), true).encodeToByteArray().size <= 255)
+        assertEquals("я".repeat(115) + ".churnote", notePackageExportFilename("я".repeat(116)))
+        assertEquals("a".repeat(231) + ".churnote", notePackageExportFilename("a".repeat(240)))
     }
 
     @Test

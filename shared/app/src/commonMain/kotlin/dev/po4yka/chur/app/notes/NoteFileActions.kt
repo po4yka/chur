@@ -1,6 +1,7 @@
 package dev.po4yka.chur.app.notes
 
 import androidx.compose.runtime.Composable
+import dev.po4yka.chur.notes.NoteAttachments
 
 /** Opens one Markdown file. Source stays in the owning screen's memory only. */
 @Composable
@@ -48,12 +49,16 @@ private fun truncateUtf8(value: String, maxBytes: Int): String {
     return bytes.decodeToString(endIndex = end, throwOnInvalidSequence = true)
 }
 
-internal fun noteExportFilename(title: String, markdown: Boolean): String {
-    val name = truncateUtf8(title.map { char ->
+private fun exportBasename(title: String, maxBytes: Int): String =
+    truncateUtf8(title.map { char ->
         if (char.isISOControl() || char in "/\\:*?\"<>|") '_' else char
-    }.joinToString("").trim().trim('.').ifBlank { "Note" }, 240)
-    return "$name.${if (markdown) "md" else "txt"}"
-}
+    }.joinToString("").trim().trim('.').ifBlank { "Note" }, maxBytes)
+
+internal fun noteExportFilename(title: String, markdown: Boolean): String =
+    "${exportBasename(title, 240)}.${if (markdown) "md" else "txt"}"
+
+internal fun notePackageExportFilename(title: String): String =
+    exportBasename(title, NoteAttachments.MAX_NAME_BYTES - ".churnote".length) + ".churnote"
 
 internal fun publicNoteExportBytes(title: String, body: String, markdown: Boolean): ByteArray =
     (if (markdown) body else "$title\n\n$body").encodeToByteArray()

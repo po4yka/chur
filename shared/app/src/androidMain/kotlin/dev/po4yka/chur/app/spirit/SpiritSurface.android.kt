@@ -372,7 +372,12 @@ private class SpiritTexture(context: Context, private val data: ByteArray, priva
         loader?.destroy(); loader = null
         materials?.destroyMaterials(); materials?.destroy(); materials = null
         if (light != 0) { e.destroyEntity(light); EntityManager.get().destroy(light); light = 0 }
-        camera?.let { e.destroyCameraComponent(it.entity); EntityManager.get().destroy(it.entity) }; camera = null
+        camera?.let {
+            val entity = it.entity
+            e.destroyCameraComponent(entity)
+            EntityManager.get().destroy(entity)
+        }
+        camera = null
         view?.let { e.destroyView(it) }; view = null
         scene?.let { e.destroyScene(it) }; scene = null
         renderer?.let { e.destroyRenderer(it) }; renderer = null

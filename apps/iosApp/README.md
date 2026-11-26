@@ -66,8 +66,10 @@ locks on backgrounding, and schedules refresh. A background launch can open the
 runtime without opening a vault session; signed ciphertext is staged until
 unlock.
 
-The host presents PhotosUI and Files pickers. Each selected file is copied
-before the provider callback ends. A Files pick is answered once. A PhotosUI
+The host presents PhotosUI and Files pickers. For backup restore and selective
+archive import, the host opens the selected Files document in place. It holds
+the security scope and coordinated read until native code finishes. A Files
+pick is answered once. A PhotosUI
 pick is loaded and answered one item at a time: the host reports the fetch of
 each item and stops it on a cancel, and Kotlin deletes the copy after its
 import, before it loads the next item. Export uses a protected

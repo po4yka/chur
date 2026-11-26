@@ -25,7 +25,7 @@ final class DocumentImportSelection: @unchecked Sendable {
         waiting.forEach { coordinator, answer in coordinator.cancel(); _ = answer.opened(nil) }
     }
 
-    func load(index: Int, shouldContinue: @escaping () -> Bool = { true }, opened: @escaping (DocumentImportSource?) -> Void) {
+    func load(index: Int, maxBytes: Int64 = 1 << 40, shouldContinue: @escaping () -> Bool = { true }, opened: @escaping (DocumentImportSource?) -> Void) {
         lock.lock()
         let url = active && urls.indices.contains(index) ? urls[index] : nil
         lock.unlock()
@@ -54,7 +54,7 @@ final class DocumentImportSelection: @unchecked Sendable {
                 defer { Darwin.close(fd) }
                 var status = stat()
                 guard fstat(fd, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG,
-                      status.st_size >= 0, status.st_size <= 1 << 40, self.isActive else {
+                      status.st_size >= 0, status.st_size <= maxBytes, self.isActive else {
                     _ = answer.opened(nil); return
                 }
                 let leased = DocumentImportSource(descriptor: fd, readablePath: readable.path, name: originalName, contentType: originalType, size: status.st_size)

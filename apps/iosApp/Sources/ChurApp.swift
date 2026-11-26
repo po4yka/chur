@@ -246,7 +246,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
     private var mediaPicker: MediaPickerDelegate?
-    private var backupPicker: BackupPickerDelegate?
     private var approvalPicker: ApprovalPickerDelegate?
     private var approvalExporter: ExportPickerDelegate?
     private var exportPicker: ExportPickerDelegate?
@@ -461,11 +460,33 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         root.present(picker, animated: true)
     }
 
-    func presentBackupPicker(_ answer: @escaping (String?) -> KotlinUnit) {
-        guard let presenter = window?.rootViewController else { _ = answer(nil); return }
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.data], asCopy: true)
-        let delegate = BackupPickerDelegate(answer: answer) { [weak self] in self?.backupPicker = nil }
-        backupPicker = delegate
+    func presentBackupPicker(_ answer: @escaping (ArchiveSource?) -> KotlinUnit) {
+        guard let presenter = window?.rootViewController, presenter.presentedViewController == nil else {
+            _ = answer(nil); return
+        }
+        let generation = exportGeneration
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.data], asCopy: false)
+        let delegate = DocumentPickerDelegate { [weak self] urls in
+            guard let self else { _ = answer(nil); return }
+            self.documentPicker = nil
+            self.documentPickerController = nil
+            guard self.exportGeneration == generation, let url = urls.first else { _ = answer(nil); return }
+            let selection = DocumentImportSelection(urls: [url])
+            self.documentSelections.add(selection)
+            // A full backup can contain many individually bounded media objects.
+            selection.load(index: 0, maxBytes: Int64.max) { source in
+                DispatchQueue.main.async { [weak self] in
+                    guard let source, self?.exportGeneration == generation else {
+                        source?.close(); _ = answer(nil); return
+                    }
+                    _ = answer(ArchiveSource(descriptor: source.descriptor, close: {
+                        source.close(); return KotlinUnit()
+                    }))
+                }
+            }
+        }
+        documentPicker = delegate
+        documentPickerController = picker
         picker.delegate = delegate
         presenter.present(picker, animated: true)
     }
@@ -1106,37 +1127,6 @@ private final class ApprovalPickerDelegate: NSObject, UIDocumentPickerDelegate {
             if let path { try? FileManager.default.removeItem(atPath: path) }
             return
         }
-        self.answer = nil
-        _ = answer(path)
-        done()
-    }
-}
-
-private final class BackupPickerDelegate: NSObject, UIDocumentPickerDelegate {
-    private var answer: ((String?) -> KotlinUnit)?
-    private let done: () -> Void
-
-    init(answer: @escaping (String?) -> KotlinUnit, done: @escaping () -> Void) {
-        self.answer = answer
-        self.done = done
-    }
-
-    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-        guard let source = urls.first else { finish(nil); return }
-        let target = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension(source.pathExtension.isEmpty ? "churbackup" : source.pathExtension)
-        do {
-            try FileManager.default.copyItem(at: source, to: target)
-            finish(target.path)
-        } catch {
-            finish(nil)
-        }
-    }
-
-    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { finish(nil) }
-
-    private func finish(_ path: String?) {
-        guard let answer else { return }
         self.answer = nil
         _ = answer(path)
         done()

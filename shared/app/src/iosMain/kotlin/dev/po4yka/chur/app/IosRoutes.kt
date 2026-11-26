@@ -121,9 +121,6 @@ import platform.UIKit.UIApplication
 import platform.UIKit.endEditing
 import platform.UIKit.accessibilityElementsHidden
 import platform.UIKit.navigationItem
-import platform.posix.O_RDONLY
-import platform.posix.close
-import platform.posix.open
 import platform.posix.unlink
 
 /**
@@ -1060,21 +1057,7 @@ private fun VaultRoute(controller: ChurController, vaultState: VaultState) {
                 choosingArchiveImport = false
                 archiveTransfers.import(ArchiveCredential(password)) {
                     val present = IosBackupPicker.present ?: error("the file picker is unavailable")
-                    present { path ->
-                        val descriptor = path?.let { open(it, O_RDONLY) } ?: -1
-                        if (descriptor < 0) {
-                            path?.let { unlink(it) }
-                            if (path != null && (controller.vaultState.value as? VaultState.Unlocked)?.generation == generation) {
-                                controller.report("That file could not be opened.")
-                            }
-                            archiveTransfers.importedFile(null)
-                        } else {
-                            archiveTransfers.importedFile(ArchiveSource(descriptor) {
-                                close(descriptor)
-                                path?.let { unlink(it) }
-                            })
-                        }
-                    }
+                    present(archiveTransfers::importedFile)
                 }
             }, onDismiss = { choosingArchiveImport = false })
     }
@@ -1883,13 +1866,7 @@ private fun discardPickedCopy(path: String) {
 /**
  * The restore route, `docs/format/BACKUP_FORMAT_V1.md` §8.
  *
- * The document picker belongs to the Xcode project for the reason the photo
- * picker does: a Compose composable cannot present a UIKit view controller
- * without the host's window. [IosBackupPicker] is that seam, and
- * `apps/iosApp/README.md` step 7 is its specification.
- *
- * The password does not leave Kotlin. The host is asked for a path and answers
- * with one; the descriptor is opened here and closed here.
+ * The host holds a coordinated file descriptor until the restore finishes.
  */
 @Composable
 private fun IosRestoreRoute(controller: ChurController) {
@@ -1920,20 +1897,17 @@ private fun IosRestoreRoute(controller: ChurController) {
                 controller.beginHostActivity()
                 pickerOpen = true
                 try {
-                    present { path ->
+                    present { source ->
                         val credential = pending
                         pending = null
                         if (pickerOpen) { pickerOpen = false; controller.endHostActivity() }
-                        val descriptor = if (credential != null) path?.let { open(it, O_RDONLY) } ?: -1 else -1
-                        if (descriptor < 0) {
+                        if (source == null || credential == null) {
                             credential?.clear()
-                            if (path != null && credential != null) controller.report("That file could not be opened.")
-                            path?.let { unlink(it) }
+                            source?.close?.invoke()
                             running = false
                         } else {
-                            controller.restoreBackup(descriptor, requireNotNull(credential)) { wasCancelled ->
-                                close(descriptor)
-                                path?.let { unlink(it) }
+                            controller.restoreBackup(source.descriptor, credential) { wasCancelled ->
+                                source.close()
                                 running = false
                                 cancelled = wasCancelled
                             }
@@ -1952,18 +1926,9 @@ private fun IosRestoreRoute(controller: ChurController) {
     )
 }
 
-/**
- * The document picker the Xcode project presents, `BACKUP_FORMAT_V1.md` §8.
- *
- * It is a hook rather than a call for the reason the photo picker is one: the
- * presentation needs the host's window, which no composable has. The host
- * installs [present] once at launch, the way it registers the background task
- * of the foreground vault session, and answers with the path of a file this process can
- * open and seek. `apps/iosApp/README.md` step 7 says which file that is.
- */
+/** The host delivers a coordinated archive source, or null when the picker is dismissed. */
 public object IosBackupPicker {
-    /** Presents the picker, and answers with a path or `null` on a dismissal. */
-    public var present: ((answer: (String?) -> Unit) -> Unit)? = null
+    public var present: ((answer: (ArchiveSource?) -> Unit) -> Unit)? = null
 }
 
 /** The host keeps a selected folder grant and returns one transient opaque token. */

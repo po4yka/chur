@@ -36,6 +36,22 @@ import kotlin.test.assertTrue
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class SelectiveArchiveControllerHostTest {
     @Test
+    fun full_backup_reports_readiness_for_sharing_and_completion_for_a_written_file() = scenario {
+        controller.createBackup(ExportTarget.SHARE)
+        val shared = sink.closedOutput()
+        assertEquals(ExportTarget.SHARE, shared.creation.target)
+        assertEquals(listOf("publishChecked", "close"), shared.events)
+        assertEquals("Backup ready. Choose where to save or share it.", controller.notice.value?.text)
+
+        withTimeout(TIMEOUT) { controller.activeOperation.first { it == null } }
+        controller.createBackup()
+        val written = sink.closedOutput()
+        assertEquals(ExportTarget.DEFAULT, written.creation.target)
+        assertEquals(listOf("publishChecked", "close"), written.events)
+        assertEquals("Backup written. It opens with the password or phrase you use now.", controller.notice.value?.text)
+    }
+
+    @Test
     fun share_export_respects_host_capacity_and_restores_selected_notes_with_its_new_password() = scenario {
         val archive = exportArchive()
         assertEquals(Creation("chur-archive.churbak", "application/octet-stream", ExportTarget.SHARE, null, sink.capacity), archive.creation)

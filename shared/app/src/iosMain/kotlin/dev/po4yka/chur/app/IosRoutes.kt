@@ -1326,7 +1326,7 @@ private fun VaultRoute(controller: ChurController, vaultState: VaultState) {
         onOpenPairingApproval = pairingFiles.open,
         onLoadPairedDevices = { controller.loadPairedDevices() },
         onRevokePairedDevice = { controller.revokePairedDevice(it) },
-        onCreateBackup = controller::createBackup,
+        onCreateBackup = { controller.createBackup(ExportTarget.SHARE) },
         onEncryptExternalFiles = controller::openExternalArchive,
         onImportArchive = { choosingArchiveImport = true },
         onRestoreArchive = controller::restoreArchiveAsSeparateVault,

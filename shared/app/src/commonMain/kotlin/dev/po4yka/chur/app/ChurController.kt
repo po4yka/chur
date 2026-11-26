@@ -2489,9 +2489,9 @@ class ChurController(
      * holding the file its size and its creation time; it does not tell them
      * whose vault it is, and neither does this.
      */
-    fun createBackup() = guarded {
+    fun createBackup(target: ExportTarget = ExportTarget.DEFAULT) = guarded {
         tracked("backup") { token ->
-            val destination = withContext(Dispatchers.Default) { exports.createArchive("chur-backup", "application/octet-stream", ExportTarget.DEFAULT, null) }
+            val destination = withContext(Dispatchers.Default) { exports.createArchive("chur-backup", "application/octet-stream", target, null) }
                 ?: throw ChurFailure(ChurStatus.IO_FAILURE, "the backup destination")
             var published = false
             try {
@@ -2509,9 +2509,16 @@ class ChurController(
                 if (_activeOperation.value?.id != token) {
                     throw ChurFailure(ChurStatus.CANCELLED, "the backup")
                 }
-                withContext(Dispatchers.Default) { destination.publish() }
+                if (target == ExportTarget.SHARE) {
+                    say("Backup ready. Choose where to save or share it.")
+                }
+                if (!withContext(Dispatchers.Default) { destination.publishChecked() }) {
+                    throw ChurFailure(ChurStatus.IO_FAILURE, "the backup destination")
+                }
                 published = true
-                say("Backup written. It opens with the password or phrase you use now.")
+                if (target != ExportTarget.SHARE) {
+                    say("Backup written. It opens with the password or phrase you use now.")
+                }
             } finally {
                 try {
                     if (!published) destination.discard()

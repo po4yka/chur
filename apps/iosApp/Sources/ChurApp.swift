@@ -640,6 +640,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
         guard let presenter = window?.rootViewController else {
             finishExport(url, generation: generation)
+            host.controller.report(message: "Could not open the export destination.")
             return
         }
         if target == .mediaLibrary {
@@ -708,9 +709,13 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             return
         }
         let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-        sheet.completionWithItemsHandler = { _, completed, _, _ in
+        sheet.completionWithItemsHandler = { _, completed, _, error in
             if self.finishExport(url, generation: generation) {
-                self.host.controller.report(message: completed ? "Shared. The copy is outside the vault." : "Sharing cancelled.")
+                if error != nil {
+                    self.host.controller.report(message: "Could not share the file.")
+                } else {
+                    self.host.controller.report(message: completed ? "Shared. The copy is outside the vault." : "Sharing cancelled.")
+                }
             }
         }
         if let popover = sheet.popoverPresentationController {

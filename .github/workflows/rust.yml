@@ -543,7 +543,7 @@ jobs:
       # Host-side Swift tests for the plaintext-handling helpers (scratch copy,
       # directory export, import, share inbox, media original safety, Live Photo).
       - name: run the Swift host-helper tests
-        run: swift test --package-path apps/iosApp
+        run: apps/iosApp/test-host.sh
       # Kotlin/C++ spirit motion parity. The build above staged the Filament headers.
       - name: check Kotlin and C++ spirit motion parity
         run: |

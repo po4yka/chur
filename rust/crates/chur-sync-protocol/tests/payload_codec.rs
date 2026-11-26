@@ -3,7 +3,10 @@
 #![allow(clippy::expect_used, clippy::panic)]
 
 use chur_core::{ChurStatus, Id};
-use chur_crypto::{Key, Nonce};
+use chur_crypto::{
+    Key, Nonce,
+    post_quantum::{SIGNATURE_LEN, recipient_public},
+};
 use chur_format::envelope::CollectionKeyEnvelope;
 use chur_sync_protocol::collection_membership::{
     CollectionMembershipAction, CollectionMembershipRecord,
@@ -78,7 +81,7 @@ fn sharing_records_round_trip_as_bounded_payload_kinds() {
         Vec::new(),
         id(14),
         [vec![15; 24], vec![16; 16]].concat(),
-        [0; 64],
+        [0; SIGNATURE_LEN],
     )
     .expect("membership operation");
     payloads[0]
@@ -93,7 +96,7 @@ fn sharing_records_round_trip_as_bounded_payload_kinds() {
         Vec::new(),
         id(14),
         [vec![15; 24], vec![16; 16]].concat(),
-        [0; 64],
+        [0; SIGNATURE_LEN],
     )
     .expect("grant operation");
     payloads[1]
@@ -173,9 +176,11 @@ fn every_allocated_payload_kind_has_one_canonical_round_trip() {
     )
     .expect("collection envelope");
     let signing_key = DeviceSigningKey::from_seed([7; 32]);
-    let enrollment = EnrollmentRecord::initial(vault, id(8), signing_key.verifying_key(), [9; 32])
-        .expect("enrollment")
-        .sign(&signing_key);
+    let recipient = recipient_public(&Key::new([9; 32])).expect("recipient key");
+    let enrollment =
+        EnrollmentRecord::initial(vault, id(8), signing_key.verifying_key(), recipient)
+            .expect("enrollment")
+            .sign(&signing_key);
     let revocation = RevocationRecord::new(vault, id(10), 4, [11; 32], 2, id(8), [12; 32])
         .expect("revocation")
         .sign(&signing_key);
@@ -417,7 +422,7 @@ fn key_free_records_must_match_the_authenticated_outer_domain() {
         Vec::new(),
         id(6),
         [vec![7; 24], vec![8; 16]].concat(),
-        [0; 64],
+        [0; SIGNATURE_LEN],
     )
     .expect("operation");
 

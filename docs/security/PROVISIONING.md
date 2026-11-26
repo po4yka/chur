@@ -24,7 +24,7 @@ After a vault exists, its owner may opt in to a whole-app gate. This choice is m
 
 An explicit pending private [app icon action](../product/APP_ICON_ACTIONS.md) is the exception to closing that temporary session: successful authentication enters the requested private workflow in the same credential-selected session. It does not bypass credential validation, recovery confirmation, or lock-epoch checks, and does not authenticate twice. Ordinary launches still close the temporary session and show the public shell. Cancel, background lock, panic, or identity replacement invalidates the request; no launcher request is persisted or restored.
 
-The iOS Share Extension is a separate ingress boundary under [ADR-0064](../adr/0064-receive-system-shares.md). The main app prepares an independent device-local receiving key on foreground activation, so that the extension can encrypt external content before a vault exists. This key does not create or open a vault. Only its public key enters the App Group; private receiving-key access stays with the main app. Import still requires normal vault authentication and explicit destination confirmation.
+The iOS Share Extension is a separate ingress boundary under [ADR-0064](../adr/0064-receive-system-shares.md). The main app prepares an independent device-local receiving key on foreground activation, so that the extension can encrypt external content before a vault exists. This key does not create or open a vault. For the internal profile, only the X-Wing public key enters the App Group. The main app stores the receiving seed as a device-local Keychain item with access while unlocked. Import still requires normal vault authentication and explicit destination confirmation.
 
 ## 3. Creation
 

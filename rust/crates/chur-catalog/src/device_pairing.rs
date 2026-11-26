@@ -1,6 +1,7 @@
 //! Durable user-approved enrollment of a restored own-vault device.
 
 use chur_core::{ChurStatus, Error, Id, Result, ensure};
+use chur_crypto::post_quantum::VERIFY_LEN;
 use chur_crypto::{Key, Nonce, random};
 use chur_format::codec::{Reader, Writer};
 use chur_sync_protocol::checkpoint::Checkpoint;
@@ -690,7 +691,7 @@ fn trusted_membership(
     })
 }
 
-fn active_keys(membership: &MembershipState) -> Vec<(Id, [u8; 32])> {
+fn active_keys(membership: &MembershipState) -> Vec<(Id, [u8; VERIFY_LEN])> {
     membership
         .active_device_ids()
         .filter_map(|device| {
@@ -765,25 +766,7 @@ pub fn finalize(db: &mut CatalogDb, root: &Key, vault: Id, now_ms: u64) -> Resul
         AuthenticationFailed,
         "downloaded pairing enrollment differs"
     );
-    for head in checkpoint.heads() {
-        // Delivery never returns an operation above a revocation cutoff, and its head creates no floor.
-        if sync_log::above_revocation_cutoff(&membership, head.device_id(), head.device_sequence())
-        {
-            continue;
-        }
-        let record = sync_log::record_at(db, head.device_id(), head.device_sequence())?
-            .ok_or_else(|| {
-                Error::new(
-                    ChurStatus::RecoveryRequired,
-                    "pairing checkpoint prefix is incomplete",
-                )
-            })?;
-        ensure!(
-            Operation::decode(&record)?.digest() == *head.operation_digest(),
-            SyncHeadRollback,
-            "pairing checkpoint prefix differs"
-        );
-    }
+    crate::sync_engine::require_checkpoint_prefixes(db, &membership, &checkpoint)?;
     // The downloaded log has validated every stored checkpoint. Keep a newer
     // source checkpoint instead of replacing its floor evidence with approval.
     let existing: Option<Vec<u8>> = db

@@ -288,8 +288,8 @@ fn foreign_collection_event(
         sync_membership::enrollment_for_device(target.catalog_ref().unwrap(), &target_device)
             .unwrap();
     let membership_records = [
-        sharing_service::IssuerMembershipRecord::Enrollment(first_enrollment.clone()),
-        sharing_service::IssuerMembershipRecord::Enrollment(second),
+        sharing_service::IssuerMembershipRecord::from(first_enrollment.clone()),
+        sharing_service::IssuerMembershipRecord::from(second),
     ];
     let mut own_records = Vec::new();
     for device in [*first_enrollment.device_id(), target_device] {
@@ -406,9 +406,7 @@ fn foreign_collection_event(
             .map(|bytes| Operation::decode(bytes).unwrap())
             .collect::<Vec<_>>();
     let attacker_device = *enrollment.device_id();
-    let records = [sharing_service::IssuerMembershipRecord::Enrollment(
-        enrollment,
-    )];
+    let records = [sharing_service::IssuerMembershipRecord::from(enrollment)];
     let mut plan = sharing_receive::receive(
         target.catalog().unwrap(),
         secret,

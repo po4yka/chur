@@ -10,15 +10,13 @@ use crate::collection_membership::CollectionMembershipRecord;
 use crate::collection_operation::CollectionOperation;
 use crate::grant::CollectionGrant;
 use crate::membership::{EnrollmentRecord, RevocationRecord};
-use crate::operation::{Operation, PROTOCOL_VERSION_V1};
+use crate::operation::{Operation, PROTOCOL_VERSION_V2};
 
 const HEADER_LEN: usize = 2 + 1 + 16 + 8;
 const ALBUM_OR_TAG_NAME_MAX: u32 = 4_096;
 const METADATA_FIELD_COUNT_MAX: usize = 32;
 const METADATA_VALUE_TOTAL_MAX: usize = 262_144;
 const TOKEN_COUNT_MAX: usize = 256;
-const ENROLLMENT_LEN: usize = 270;
-const REVOCATION_LEN: usize = 194;
 
 /// One allocated metadata field identifier.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -307,7 +305,7 @@ impl OperationPayload {
     pub fn encode(&self) -> Vec<u8> {
         let mut writer = Writer::with_capacity(HEADER_LEN + 128);
         writer
-            .u16(PROTOCOL_VERSION_V1)
+            .u16(PROTOCOL_VERSION_V2)
             .u8(self.body.kind())
             .id(&self.collection_id)
             .u64(self.collection_epoch);
@@ -324,7 +322,7 @@ impl OperationPayload {
         );
         let mut reader = Reader::new(bytes, ChurStatus::NonCanonicalEncoding);
         ensure!(
-            reader.u16()? == PROTOCOL_VERSION_V1,
+            reader.u16()? == PROTOCOL_VERSION_V2,
             UnsupportedVersion,
             "sync payload version is not supported"
         );
@@ -862,8 +860,12 @@ fn decode_body(kind: u8, reader: &mut Reader<'_>) -> Result<PayloadBody> {
             object_generation: reader.u64()?,
             authored_at_ms: reader.u64()?,
         },
-        0x0d => PayloadBody::AddDevice(EnrollmentRecord::decode(reader.slice(ENROLLMENT_LEN)?)?),
-        0x0e => PayloadBody::RevokeDevice(RevocationRecord::decode(reader.slice(REVOCATION_LEN)?)?),
+        0x0d => PayloadBody::AddDevice(EnrollmentRecord::decode(
+            reader.slice(EnrollmentRecord::LEN)?,
+        )?),
+        0x0e => PayloadBody::RevokeDevice(RevocationRecord::decode(
+            reader.slice(RevocationRecord::LEN)?,
+        )?),
         0x0f => PayloadBody::CreateCollectionEpoch {
             previous_collection_epoch: reader.u64()?,
             membership_generation: reader.u64()?,
@@ -1113,5 +1115,5 @@ fn read_tokens(reader: &mut Reader<'_>) -> Result<Vec<Id>> {
 
 const _: () = assert!(envelope_bounds::OBJECT_KEY_ENVELOPE_LEN == 142);
 const _: () = assert!(envelope_bounds::COLLECTION_KEY_ENVELOPE_LEN == 126);
-const _: () = assert!(CollectionMembershipRecord::LEN == 292);
-const _: () = assert!(CollectionGrant::LEN == 309);
+const _: () = assert!(CollectionMembershipRecord::LEN == 6641);
+const _: () = assert!(CollectionGrant::LEN == 4642);

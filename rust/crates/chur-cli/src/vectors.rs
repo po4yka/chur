@@ -1821,8 +1821,8 @@ fn sync_protocol(out: &mut Vec<Vector>) -> Result<()> {
     let peer_seed = [0x82; 32];
     let owner_key = DeviceSigningKey::from_seed(owner_seed);
     let peer_key = DeviceSigningKey::from_seed(peer_seed);
-    let owner_hpke_public_key = [0x83; 32];
-    let peer_hpke_public_key = [0x84; 32];
+    let owner_hpke_public_key = chur_crypto::post_quantum::recipient_public(&key(0x83))?;
+    let peer_hpke_public_key = chur_crypto::post_quantum::recipient_public(&key(0x84))?;
 
     let initial = EnrollmentRecord::initial(
         vault_id,
@@ -1834,7 +1834,7 @@ fn sync_protocol(out: &mut Vec<Vector>) -> Result<()> {
     out.push(
         VectorBuilder::accept(
             "operation",
-            "operation-v1-initial-enrollment",
+            "operation-v2-initial-enrollment",
             IDENTITY_SPEC,
             "4",
             "Generation-one self-enrollment fixes the device suites, capability, signature, and membership-chain commitment.",
@@ -1870,7 +1870,7 @@ fn sync_protocol(out: &mut Vec<Vector>) -> Result<()> {
     out.push(
         VectorBuilder::accept(
             "operation",
-            "operation-v1-signed-record",
+            "operation-v2-signed-record",
             OPERATION_SPEC,
             "4",
             "One genesis operation fixes payload encryption, canonical signing bytes, and the per-device chain digest.",
@@ -1899,7 +1899,7 @@ fn sync_protocol(out: &mut Vec<Vector>) -> Result<()> {
     out.push(
         VectorBuilder::accept(
             "operation",
-            "operation-v1-collection-epoch-commitment",
+            "operation-v2-collection-epoch-commitment",
             ROLLBACK_SPEC,
             "6.1",
             "Two sorted current collection epochs fix the ordered checkpoint commitment input.",
@@ -1934,7 +1934,7 @@ fn sync_protocol(out: &mut Vec<Vector>) -> Result<()> {
     out.push(
         VectorBuilder::accept(
             "operation",
-            "operation-v1-checkpoint",
+            "operation-v2-checkpoint",
             ROLLBACK_SPEC,
             "6",
             "A signed uncompacted checkpoint binds membership, exact device heads, and current collection epochs.",
@@ -1973,7 +1973,7 @@ fn sync_protocol(out: &mut Vec<Vector>) -> Result<()> {
     out.push(
         VectorBuilder::accept(
             "operation",
-            "operation-v1-successor-enrollment",
+            "operation-v2-successor-enrollment",
             IDENTITY_SPEC,
             "4",
             "A later enrollment binds the new keys to the prior membership head and the issuer's bootstrap checkpoint.",
@@ -2007,7 +2007,7 @@ fn sync_protocol(out: &mut Vec<Vector>) -> Result<()> {
     out.push(
         VectorBuilder::accept(
             "operation",
-            "operation-v1-revocation",
+            "operation-v2-revocation",
             IDENTITY_SPEC,
             "9",
             "Device revocation pins the final accepted branch and advances the membership chain.",
@@ -2025,22 +2025,18 @@ fn sync_protocol(out: &mut Vec<Vector>) -> Result<()> {
         .build(),
     );
 
-    let mut version_two = operation.encode();
-    version_two[1] = 2;
-    expect_rejection(
-        Operation::decode(&version_two),
-        ChurStatus::UnsupportedVersion,
-    )?;
+    let legacy = include_bytes!("../../../../test-vectors/internal-pq/classical-operation.bin");
+    expect_rejection(Operation::decode(legacy), ChurStatus::UnsupportedVersion)?;
     out.push(
         VectorBuilder::reject(
             "operation",
-            "operation-v1-version-two",
+            "operation-v2-rejects-classical",
             OPERATION_SPEC,
             "2",
-            "A v1 reader rejects an unallocated sync protocol version.",
+            "The prototype rejects the classical sync protocol.",
             "UNSUPPORTED_VERSION",
         )
-        .input_bytes("record", &version_two)
+        .input_bytes("record", legacy)
         .build(),
     );
 
@@ -2053,7 +2049,7 @@ fn sync_protocol(out: &mut Vec<Vector>) -> Result<()> {
     out.push(
         VectorBuilder::reject(
             "operation",
-            "operation-v1-truncated-signature",
+            "operation-v2-truncated-signature",
             OPERATION_SPEC,
             "2",
             "A record with a truncated signature is not canonical.",
@@ -2074,10 +2070,10 @@ fn sync_protocol(out: &mut Vec<Vector>) -> Result<()> {
     out.push(
         VectorBuilder::reject(
             "operation",
-            "operation-v1-modified-signature",
+            "operation-v2-modified-signature",
             OPERATION_SPEC,
             "7",
-            "A modified Ed25519 signature does not authenticate the canonical operation.",
+            "A modified ML-DSA-65 signature does not authenticate the canonical operation.",
             "AUTHENTICATION_FAILED",
         )
         .input_bytes("signing_public_key", &owner_key.verifying_key())
@@ -2085,27 +2081,28 @@ fn sync_protocol(out: &mut Vec<Vector>) -> Result<()> {
         .build(),
     );
 
-    let mut hpke_suite_two = initial.encode();
-    hpke_suite_two[69] = 2;
+    let mut legacy_hpke_suite = initial.encode();
+    legacy_hpke_suite[37 + chur_crypto::post_quantum::VERIFY_LEN] = 1;
     expect_rejection(
-        EnrollmentRecord::decode(&hpke_suite_two),
-        ChurStatus::UnsupportedVersion,
+        EnrollmentRecord::decode(&legacy_hpke_suite),
+        ChurStatus::UnsupportedSuite,
     )?;
     out.push(
         VectorBuilder::reject(
             "operation",
-            "operation-v1-hpke-suite-two",
+            "operation-v2-classical-hpke-suite",
             IDENTITY_SPEC,
             "4",
-            "Enrollment rejects an unallocated HPKE suite before accepting device keys.",
-            "UNSUPPORTED_VERSION",
+            "Enrollment rejects the classical HPKE suite before accepting device keys.",
+            "UNSUPPORTED_SUITE",
         )
-        .input_bytes("record", &hpke_suite_two)
+        .input_bytes("record", &legacy_hpke_suite)
         .build(),
     );
 
     let mut compacted_checkpoint = checkpoint.encode();
-    let catalog_commitment = compacted_checkpoint.len() - 64 - 32;
+    let catalog_commitment =
+        compacted_checkpoint.len() - chur_crypto::post_quantum::SIGNATURE_LEN - 32;
     compacted_checkpoint[catalog_commitment] = 1;
     expect_rejection(
         Checkpoint::decode(&compacted_checkpoint),
@@ -2114,10 +2111,10 @@ fn sync_protocol(out: &mut Vec<Vector>) -> Result<()> {
     out.push(
         VectorBuilder::reject(
             "operation",
-            "operation-v1-compacted-checkpoint",
+            "operation-v2-compacted-checkpoint",
             ROLLBACK_SPEC,
             "6.1",
-            "Sync v1 rejects a checkpoint that claims an unsupported compacted catalog state.",
+            "Sync v2 rejects a checkpoint that claims an unsupported compacted catalog state.",
             "UNSUPPORTED_VERSION",
         )
         .input_bytes("record", &compacted_checkpoint)
@@ -2133,7 +2130,7 @@ fn sync_protocol(out: &mut Vec<Vector>) -> Result<()> {
     out.push(
         VectorBuilder::reject(
             "operation",
-            "operation-v1-self-issued-revocation",
+            "operation-v2-self-issued-revocation",
             IDENTITY_SPEC,
             "9",
             "A device cannot issue its own revocation record.",
@@ -2224,7 +2221,7 @@ fn sharing_protocol(out: &mut Vec<Vector>) -> Result<()> {
     out.push(
         VectorBuilder::accept(
             "collection-operation",
-            "collection-operation-v1-signed-encrypted",
+            "collection-operation-v2-signed-encrypted",
             COLLECTION_OPERATION_SPEC,
             "1",
             "One byte-exact signed and encrypted cross-vault collection operation.",
@@ -2241,7 +2238,7 @@ fn sharing_protocol(out: &mut Vec<Vector>) -> Result<()> {
     );
 
     let collection_key = key(0x99);
-    let ephemeral_ikm = [0x9a; 32];
+    let ephemeral_ikm = [0x9a; 64];
     let grant = CollectionGrant::seal_for_test_vector(
         id(0x9b)?,
         source_vault_id,
@@ -2274,7 +2271,7 @@ fn sharing_protocol(out: &mut Vec<Vector>) -> Result<()> {
     out.push(
         VectorBuilder::accept(
             "collection-grant",
-            "collection-grant-v1-signed-hpke",
+            "collection-grant-v2-signed-hpke",
             GRANT_SPEC,
             "2",
             "One byte-exact signed RFC 9180 grant opens only to the bound recipient device.",
@@ -2316,7 +2313,7 @@ fn sharing_protocol(out: &mut Vec<Vector>) -> Result<()> {
     out.push(
         VectorBuilder::reject(
             "collection-grant",
-            "collection-grant-v1-modified-signature",
+            "collection-grant-v2-modified-signature",
             GRANT_SPEC,
             "4",
             "A modified sender signature cannot authenticate the HPKE grant.",
@@ -2330,19 +2327,19 @@ fn sharing_protocol(out: &mut Vec<Vector>) -> Result<()> {
     );
 
     let mut unknown_profile = grant.encode();
-    unknown_profile[3] = 2;
+    unknown_profile[3] = 0xff;
     expect_rejection(
         CollectionGrant::decode(&unknown_profile),
-        ChurStatus::UnsupportedVersion,
+        ChurStatus::UnsupportedSuite,
     )?;
     out.push(
         VectorBuilder::reject(
             "collection-grant",
-            "collection-grant-v1-unknown-hpke-profile",
+            "collection-grant-v2-unknown-hpke-profile",
             GRANT_SPEC,
             "1",
             "A reader rejects an unallocated HPKE profile before opening a key.",
-            "UNSUPPORTED_VERSION",
+            "UNSUPPORTED_SUITE",
         )
         .input_bytes("record", &unknown_profile)
         .build(),
@@ -2372,7 +2369,7 @@ fn disposable_object_keys(out: &mut Vec<Vector>) -> Result<()> {
     out.push(
         VectorBuilder::accept(
             "operation",
-            "operation-v1-object-key-request",
+            "operation-v2-object-key-request",
             "docs/sync/OBJECT_KEY_GRANTS.md",
             "1",
             "One signed disposable key request binds the recipient to one committed object.",
@@ -2394,18 +2391,18 @@ fn disposable_object_keys(out: &mut Vec<Vector>) -> Result<()> {
         &request,
         &content,
         &sender,
-        [0xae; 32],
+        [0xae; 64],
     )?;
     out.push(
         VectorBuilder::accept(
             "operation",
-            "operation-v1-object-key-grant",
+            "operation-v2-object-key-grant",
             "docs/sync/OBJECT_KEY_GRANTS.md",
             "2",
             "One signed HPKE grant opens only with the object's disposable private key.",
         )
         .input_bytes("source_signing_seed", &[0xa2; 32])
-        .input_bytes("ephemeral_ikm", &[0xae; 32])
+        .input_bytes("ephemeral_ikm", &[0xae; 64])
         .input_bytes("object_key", content.expose())
         .input_bytes("request", &request.encode())
         .expect_bytes("record", &grant.encode())
@@ -2421,7 +2418,7 @@ fn disposable_object_keys(out: &mut Vec<Vector>) -> Result<()> {
     );
     for (vector_id, body) in [
         (
-            "operation-v1-key-free-object-commit",
+            "operation-v2-key-free-object-commit",
             PayloadBody::CommitObject {
                 object_id: object,
                 object_generation: 1,
@@ -2432,7 +2429,7 @@ fn disposable_object_keys(out: &mut Vec<Vector>) -> Result<()> {
             },
         ),
         (
-            "operation-v1-key-free-object-rewrap",
+            "operation-v2-key-free-object-rewrap",
             PayloadBody::RewrapObjectKey {
                 object_id: object,
                 object_key_commitment: object_key_commitment(&collection, &object, &content),
@@ -2449,7 +2446,7 @@ fn disposable_object_keys(out: &mut Vec<Vector>) -> Result<()> {
     out.push(
         VectorBuilder::accept(
             "operation",
-            "operation-v1-device-ready",
+            "operation-v2-device-ready",
             "docs/sync/OPERATION_PAYLOAD_V1.md",
             "2",
             "An enrolled new device starts its ordinary chain without a content mutation.",
@@ -2470,7 +2467,7 @@ fn disposable_object_keys(out: &mut Vec<Vector>) -> Result<()> {
     out.push(
         VectorBuilder::accept(
             "operation",
-            "operation-v1-permanent-object-purge",
+            "operation-v2-permanent-object-purge",
             "docs/sync/OPERATION_PAYLOAD_V1.md",
             "2",
             "A terminal purge names the committed object and contains no key.",
@@ -2498,7 +2495,7 @@ fn disposable_object_keys(out: &mut Vec<Vector>) -> Result<()> {
     out.push(
         VectorBuilder::accept(
             "operation",
-            "operation-v1-declare-collection",
+            "operation-v2-declare-collection",
             "docs/sync/OPERATION_PAYLOAD_V1.md",
             "2",
             "An own-vault declaration carries a root-wrapped metadata key and no content key.",

@@ -16,8 +16,8 @@ import dev.po4yka.chur.ffi.SharingMember
 import dev.po4yka.chur.ffi.SharingOverview
 import dev.po4yka.chur.ffi.SharingPermission
 import dev.po4yka.chur.ffi.SharingRecipient
-import dev.po4yka.chur.ffi.fromHex
-import dev.po4yka.chur.ffi.toHex
+import dev.po4yka.chur.ffi.decodeDevicePairingCode
+import dev.po4yka.chur.ffi.encodeDevicePairingCode
 import dev.po4yka.chur.ffi.QueryScope
 import dev.po4yka.chur.ffi.QuerySort
 import dev.po4yka.chur.sync.PeerSyncCoordinator
@@ -1787,24 +1787,24 @@ class ChurController(
     fun prepareDevicePairing() = pairingAction {
         val request = (sync ?: return@pairingAction).prepareDevicePairing()
         _devicePairing.value = _devicePairing.value.copy(
-            requestCode = request.request.toHex().chunked(32).joinToString("\n"),
+            requestCode = encodeDevicePairingCode(request.request),
             requestFingerprint = request.fingerprint,
         )
     }
-    fun inspectDevicePairing(requestHex: String) = pairingAction {
-        val preview = (sync ?: return@pairingAction).inspectDevicePairing(pairingRequestBytes(requestHex))
+    fun inspectDevicePairing(requestCode: String) = pairingAction {
+        val preview = (sync ?: return@pairingAction).inspectDevicePairing(decodeDevicePairingCode(requestCode))
         _pairingApproval.value?.fill(0)
         _pairingApproval.value = null
         _devicePairing.value = _devicePairing.value.copy(
-            inspectedRequestCode = requestHex, inspectedFingerprint = preview.fingerprint, approvalReady = false,
+            inspectedRequestCode = requestCode, inspectedFingerprint = preview.fingerprint, approvalReady = false,
         )
     }
-    fun approveDevicePairing(requestHex: String, expectedFingerprint: String) = pairingAction {
+    fun approveDevicePairing(requestCode: String, expectedFingerprint: String) = pairingAction {
         val engine = sync ?: return@pairingAction
         val preview = _devicePairing.value
-        if (preview.inspectedRequestCode != requestHex || preview.inspectedFingerprint != expectedFingerprint)
+        if (preview.inspectedRequestCode != requestCode || preview.inspectedFingerprint != expectedFingerprint)
             throw ChurFailure(ChurStatus.AUTHENTICATION_FAILED, "compare the device fingerprint again")
-        val approval = withContext(Dispatchers.Default) { engine.approveDevicePairing(pairingRequestBytes(requestHex), expectedFingerprint) }
+        val approval = withContext(Dispatchers.Default) { engine.approveDevicePairing(decodeDevicePairingCode(requestCode), expectedFingerprint) }
         _pairingApproval.value?.fill(0)
         _pairingApproval.value = approval
         _devicePairing.value = _devicePairing.value.copy(approvalReady = true)
@@ -1839,13 +1839,7 @@ class ChurController(
             }
         }
     }
-    private fun pairingRequestBytes(requestHex: String): ByteArray {
-        val compact = requestHex.filterNot(Char::isWhitespace)
-        if (compact.length != 420) throw ChurFailure(ChurStatus.INVALID_INPUT, "invalid device request length")
-        return try { compact.fromHex() } catch (_: IllegalArgumentException) {
-            throw ChurFailure(ChurStatus.INVALID_INPUT, "invalid hexadecimal device request")
-        }
-    }
+
 
     /**
      * Stages a recovery slot and shows the phrase once, after the device

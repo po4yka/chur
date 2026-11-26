@@ -66,7 +66,7 @@ public sealed interface GateResult {
 }
 
 /** The major ABI version this application was built against. */
-public const val EXPECTED_ABI_MAJOR: UInt = 7u
+public const val EXPECTED_ABI_MAJOR: UInt = 8u
 
 /**
  * The oldest minor ABI version whose functions this application calls.
@@ -85,6 +85,9 @@ public const val FLAVOR_DEBUG_ASSERTIONS: UInt = 2u
 
 /** Build-flavor bit: test hooks are compiled in. */
 public const val FLAVOR_TEST_HOOKS: UInt = 4u
+
+/** Unreviewed wire profile for internal evaluation. */
+public const val FLAVOR_INTERNAL_PQ: UInt = 8u
 
 /**
  * Decides whether a library may be called.
@@ -118,7 +121,8 @@ public fun gate(handshake: NativeHandshake, releaseApplication: Boolean): GateRe
         // Both bits, or neither. Neither is the panic fallback of ADR-0037.
         return refuse(GateResult.Reason.BUILD_FLAVOR)
     }
-    if (releaseApplication && (debug || testHooks)) {
+    val internalPq = handshake.buildFlavor and FLAVOR_INTERNAL_PQ != 0u
+    if (releaseApplication && (debug || testHooks || internalPq)) {
         return refuse(GateResult.Reason.BUILD_FLAVOR)
     }
     // An unknown capability bit is ignored and never enables behaviour, so the

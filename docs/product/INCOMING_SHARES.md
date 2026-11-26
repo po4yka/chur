@@ -27,7 +27,7 @@ The Share Extension saves a temporary encrypted batch and asks the user to open 
 
 The iOS queue accepts up to eight batches with 64 items per batch, 4 GiB per item, and 8 GiB total including encryption overhead. Text and URLs have a 1 MiB limit. Pending and completed batches expire after 24 hours; maintenance removes them the next time the inbox is used.
 
-Only encrypted payloads and the receiving public key enter the App Group. The app's private receiving key stays in its own device-local Keychain. Payload names and MIME metadata are encrypted. Partial writes are not offered for import. Expired and abandoned entries are removed during inbox maintenance. This queue is local, excluded from backup, and separate from vault backups and synchronization.
+Only encrypted payloads and the receiving public key enter the App Group. The internal profile uses a fresh item key and an X-Wing HPKE envelope. Only the main app can read the receiving seed from its device-local Keychain. Payload names and MIME metadata are encrypted. Partial writes are not offered for import. Expired and abandoned entries are removed during inbox maintenance. This queue is local, excluded from backup, and separate from vault backups and synchronization.
 
 Documents and text stream from the authenticated encrypted queue into the importer. The whole envelope is checked before its source is exposed. Media uses the existing codec path; URL-only ImageIO and AVFoundation work can use bounded, protected scratch while the vault is unlocked. Unsupported media or media outside the scratch budget uses the file importer. Import or discard removes the encrypted batch; no automatic retry can duplicate successful items in a later session.
 

@@ -1,6 +1,7 @@
 package dev.po4yka.chur.ffi
 
 import dev.po4yka.chur.core.model.ChurStatus
+import kotlin.io.encoding.Base64
 
 /**
  * The canonical boundary records of `docs/interop/FFI_CONTRACT.md` §6.4 and
@@ -37,8 +38,9 @@ const val GCM_NONCE_LENGTH: Int = 12
 /** A wrapped 32-byte key and its 16-byte tag. */
 const val WRAPPED_KEY_LENGTH: Int = 48
 
-/** Length of an Ed25519 or X25519 public key. */
-const val PUBLIC_KEY_LENGTH: Int = 32
+/** Fixed public key sizes for the internal ML-DSA-65 and hybrid HPKE profile. */
+internal const val SIGNING_PUBLIC_KEY_LENGTH: Int = 1_952
+internal const val RECIPIENT_PUBLIC_KEY_LENGTH: Int = 1_216
 
 private const val SHARING_BUNDLE_BYTES_MAX: Long = 16L * 1024 * 1024
 private const val SHARING_RECORDS_MAX: Int = 4_096
@@ -377,6 +379,25 @@ fun encodeSharingIssuerEvidence(evidence: SharingIssuerEvidence): ByteArray {
 /** One device position that native signature and sequence checks accepted. */
 data class SyncDeviceHead(val deviceId: ByteArray, val sequence: ULong)
 
+private const val PAIRING_REQUEST_BYTES = 6_559
+const val PAIRING_CODE_MAX_CHARS = 4 * ((PAIRING_REQUEST_BYTES + 2) / 3)
+
+fun encodeDevicePairingCode(request: ByteArray): String {
+    if (request.size != PAIRING_REQUEST_BYTES) throw ChurFailure(ChurStatus.INVALID_INPUT, "invalid device request length")
+    return Base64.encode(request)
+}
+
+fun decodeDevicePairingCode(requestCode: String): ByteArray {
+    if (requestCode.length != PAIRING_CODE_MAX_CHARS) {
+        throw ChurFailure(ChurStatus.INVALID_INPUT, "invalid device request length")
+    }
+    val bytes = try { Base64.decode(requestCode) } catch (_: IllegalArgumentException) {
+        throw ChurFailure(ChurStatus.INVALID_INPUT, "invalid device request encoding")
+    }
+    if (bytes.size != PAIRING_REQUEST_BYTES) throw ChurFailure(ChurStatus.INVALID_INPUT, "invalid device request length")
+    return bytes
+}
+
 class DevicePairingRequest(val request: ByteArray, val fingerprint: String)
 
 class DevicePairingPreview(val vaultId: ByteArray, val deviceId: ByteArray, val fingerprint: String)
@@ -520,14 +541,14 @@ fun decodeSyncHeads(bytes: ByteArray, length: Int): List<SyncDeviceHead> {
 /** Decodes the collection-sharing identity record of §6.9. */
 fun decodeSharingIdentity(bytes: ByteArray, length: Int): SharingIdentity {
     val reader = RecordReader(bytes, length)
-    if (reader.short() != 1) {
-        throw ChurFailure(ChurStatus.NON_CANONICAL_ENCODING, "the sharing identity version")
+    if (reader.short() != 2) {
+        throw ChurFailure(ChurStatus.UNSUPPORTED_VERSION, "the sharing identity version")
     }
     val identity = SharingIdentity(
         vaultId = reader.take(ID_LENGTH),
         deviceId = reader.take(ID_LENGTH),
-        signingPublicKey = reader.take(PUBLIC_KEY_LENGTH),
-        hpkePublicKey = reader.take(PUBLIC_KEY_LENGTH),
+        signingPublicKey = reader.take(SIGNING_PUBLIC_KEY_LENGTH),
+        hpkePublicKey = reader.take(RECIPIENT_PUBLIC_KEY_LENGTH),
         fingerprint = reader.bounded().decodeToString(),
         enrollment = reader.bounded(),
         initialOperation = reader.bounded(),

@@ -1,5 +1,8 @@
 # Device Identity
 
+The classical wire profile below is historical in the internal post-quantum build. See [ADR-0073](../adr/0073-internal-post-quantum-profile.md) for the required profile and [peer protocol v3](PEER_PROTOCOL_V3.md) for the direct transport.
+
+
 > **Status:** Accepted normative Phase 3 protocol
 
 Device identity authenticates sync operations, enrollment, and collection grants. It is separate from transport authentication and from local vault-unlock credentials.

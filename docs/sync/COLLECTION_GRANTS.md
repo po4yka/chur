@@ -1,5 +1,8 @@
 # Collection Grants
 
+The classical wire profile below is historical in the internal post-quantum build. See [ADR-0073](../adr/0073-internal-post-quantum-profile.md) for the required profile and [peer protocol v3](PEER_PROTOCOL_V3.md) for the direct transport.
+
+
 > **Status:** Accepted normative Phase 4 protocol
 
 A collection grant authorizes a recipient device/user to unwrap one Security Collection key epoch. This grant opens collection metadata. Object content keys use separate [disposable object-key grants](OBJECT_KEY_GRANTS.md). The signed operation log never contains an object-key envelope. Public-key cryptography wraps only small keys, never bulk media.

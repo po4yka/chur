@@ -226,7 +226,7 @@ fn a_slot_body_from_a_later_profile_is_unsupported() {
 #[test]
 fn a_writer_emits_only_the_current_approved_version() {
     // §2: writers emit only current approved versions. Every encoder writes the
-    // v1 constants without offering a parameter that could select another.
+    // fixed versions and the internal vault policy without a caller-selected suite.
     let collection = CollectionKeyEnvelope::seal(
         &key(0x5a),
         id(0x11),
@@ -258,7 +258,7 @@ fn a_writer_emits_only_the_current_approved_version() {
     }
     .encode(&key(0x5a))
     .unwrap();
-    assert_eq!(&descriptor[0x08..0x0e], &[0, 1, 0, 1, 0, 1]);
+    assert_eq!(&descriptor[0x08..0x0e], &[0, 1, 0, 1, 0xff, 1]);
 }
 
 #[test]

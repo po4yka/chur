@@ -204,9 +204,9 @@ class ChurVaultHostTest {
 
         assertEquals(16, first.vaultId.size)
         assertEquals(16, first.deviceId.size)
-        assertEquals(32, first.signingPublicKey.size)
-        assertEquals(32, first.hpkePublicKey.size)
-        assertEquals(49, first.fingerprint.length)
+        assertEquals(1952, first.signingPublicKey.size)
+        assertEquals(1216, first.hpkePublicKey.size)
+        assertEquals(79, first.fingerprint.length)
         assertTrue(first.enrollment.isNotEmpty())
         assertTrue(first.initialOperation.isNotEmpty())
         assertContentEquals(first.vaultId, replay.vaultId)
@@ -245,8 +245,8 @@ class ChurVaultHostTest {
     @Test
     fun the_handshake_matches_the_frozen_abi() {
         val handshake = ChurVault.handshake()
-        assertEquals(7, handshake.major)
-        assertEquals(4, handshake.minor, "staged sync pages use ABI 7.4")
+        assertEquals(8, handshake.major)
+        assertEquals(4, handshake.minor, "the internal profile exposes ABI 8.4")
         assertEquals(1, handshake.objectFormatMin)
         assertEquals(2, handshake.objectFormatMax)
         assertTrue(handshake.capabilities and 0b0000_0010L != 0L, "the reader is declared")

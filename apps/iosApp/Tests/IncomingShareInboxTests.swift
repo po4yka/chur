@@ -1,6 +1,6 @@
 import Darwin
 import Foundation
-import Security
+import CryptoKit
 import XCTest
 @testable import ChurScratch
 
@@ -9,10 +9,9 @@ final class IncomingShareInboxTests: XCTestCase {
     private var inbox: IncomingShareInbox!
     override func setUpWithError() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let key = try XCTUnwrap(SecKeyCreateRandomKey([kSecAttrKeyType: kSecAttrKeyTypeRSA,
-            kSecAttrKeySizeInBits: 2048] as CFDictionary, nil))
+        let key = SymmetricKey(size: .bits256)
         inbox = try IncomingShareInbox(root: root.appendingPathComponent("inbox"),
-            publicKey: XCTUnwrap(SecKeyCopyPublicKey(key)), privateKey: key)
+            publicKey: IncomingShareInbox.recipientPublicKey(for: key), privateKey: key)
     }
     override func tearDownWithError() throws { try FileManager.default.removeItem(at: root) }
     private func ready(_ data: Data) throws -> URL {
@@ -74,7 +73,7 @@ final class IncomingShareInboxTests: XCTestCase {
         func length(_ at: Int) -> Int {
             original[at..<(at + 4)].reduce(0) { ($0 << 8) | Int($1) }
         }
-        let first = 264 + 4 + length(264)
+        let first = 1176 + 4 + length(1176)
         let second = first + 4 + length(first)
         let firstFrame = original[first..<second]
         let secondFrame = original[second..<original.count]
@@ -131,10 +130,46 @@ final class IncomingShareInboxTests: XCTestCase {
         }
     }
 
-    func testWriteOnlyExtensionCannotReadEnvelope() throws {
-        let batch = try ready(Data([9]))
-        let key = try XCTUnwrap(SecKeyCreateRandomKey([kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeySizeInBits: 2048] as CFDictionary, nil))
-        let extensionInbox = try IncomingShareInbox(root: inbox.root, publicKey: XCTUnwrap(SecKeyCopyPublicKey(key)))
-        XCTAssertThrowsError(try extensionInbox.open(XCTUnwrap(inbox.entries(batch).first)))
+    func testOpensGoRecipientEnvelope() throws {
+        let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let vectors = repository.appendingPathComponent("test-vectors/internal-pq")
+        let recipient = try Data(contentsOf: vectors.appendingPathComponent("recipient-public.bin"))
+        let envelope = try Data(contentsOf: vectors.appendingPathComponent("inbox-envelope.bin"))
+        let seed = SymmetricKey(data: Data(repeating: 0x42, count: 32))
+        XCTAssertEqual(try IncomingShareInbox.recipientPublicKey(for: seed), recipient)
+        inbox = try IncomingShareInbox(root: inbox.root, publicKey: recipient, privateKey: seed)
+        let header = Data("CHURIN02".utf8) + envelope
+        let metadata = Data(#"{"name":"go.txt","contentType":"text/plain","size":0}"#.utf8)
+        let sealed = try XCTUnwrap(AES.GCM.seal(metadata,
+            using: SymmetricKey(data: Data(repeating: 0xa5, count: 32)),
+            authenticating: header + Data(repeating: 0, count: 4)).combined)
+        var count = UInt32(sealed.count).bigEndian
+        let length = withUnsafeBytes(of: &count) { Data($0) }
+        let file = root.appendingPathComponent("go.cipher")
+        try (header + length + sealed).write(to: file)
+        let (meta, data) = try consume(file)
+        XCTAssertEqual(meta.name, "go.txt")
+        XCTAssertTrue(data.isEmpty)
+    }
+
+    func testExtensionWritesForAppAndCannotOpenTheEnvelope() throws {
+        let key = SymmetricKey(size: .bits256)
+        let publicKey = try IncomingShareInbox.recipientPublicKey(for: key)
+        let extensionInbox = try IncomingShareInbox(root: inbox.root, publicKey: publicKey)
+        let batch = try extensionInbox.begin()
+        try extensionInbox.appendText("sealed from extension", name: "note", to: batch, shouldContinue: { true })
+        try extensionInbox.finish(batch)
+        let file = try XCTUnwrap(inbox.entries(XCTUnwrap(inbox.pending().first)).first)
+        XCTAssertThrowsError(try extensionInbox.open(file))
+        XCTAssertThrowsError(try inbox.open(file))
+        inbox = try IncomingShareInbox(root: inbox.root, publicKey: publicKey, privateKey: key)
+        XCTAssertEqual(try consume(file).1, Data("sealed from extension".utf8))
+
+        var old = try Data(contentsOf: file)
+        XCTAssertEqual(old.prefix(8), Data("CHURIN02".utf8))
+        old.replaceSubrange(0..<8, with: "CHURIN01".utf8)
+        try old.write(to: file)
+        XCTAssertThrowsError(try consume(file))
     }
 }

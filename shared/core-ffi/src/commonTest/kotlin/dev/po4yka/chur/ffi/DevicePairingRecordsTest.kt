@@ -37,6 +37,17 @@ class DevicePairingRecordsTest {
         assertEquals(ChurStatus.RESOURCE_LIMIT_EXCEEDED, refusal.status)
     }
 
+    @Test
+    fun transfer_preserves_the_full_request_and_rejects_wrong_sizes_before_native_decoding() {
+        val request = ByteArray(6_559) { it.toByte() }
+        val code = encodeDevicePairingCode(request)
+        assertEquals(8_748, code.length)
+        assertContentEquals(request, decodeDevicePairingCode(code))
+        for (invalid in listOf("00".repeat(210), code + "A", "!".repeat(code.length), "A".repeat(code.length))) {
+            assertFailsWith<ChurFailure> { decodeDevicePairingCode(invalid) }
+        }
+    }
+
     private fun device(id: Int, fingerprint: String, retry: Int): ByteArray {
         val text = fingerprint.encodeToByteArray()
         return ByteArray(16) { id.toByte() } + byteArrayOf(0, 0, 0, text.size.toByte()) + text +

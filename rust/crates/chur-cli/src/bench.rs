@@ -395,3 +395,69 @@ pub fn lock_invalidation(iterations: usize) -> Result<()> {
     println!("a device from ADR-0017, so this approves no budget.");
     Ok(())
 }
+
+/// Measures decoding, signature verification and chain checks on an encoded history.
+///
+/// # Errors
+///
+/// Returns an error for a sample count outside the stated bounds or any failed cryptographic check.
+pub fn signed_history(records: u32, iterations: usize) -> Result<()> {
+    use chur_core::ensure;
+    use chur_sync_protocol::operation::{DeviceSigningKey, Operation};
+
+    ensure!(
+        (1..=4_096).contains(&records) && (1..=128).contains(&iterations),
+        InvalidInput,
+        "use 1 to 4096 operations and 1 to 128 samples"
+    );
+    let signer = DeviceSigningKey::from_seed([0x19; 32]);
+    let verifier = signer.verifying_key();
+    let key = Key::new([0xa1; 32]);
+    let vault = Id::new([0x31; 16])?;
+    let device = Id::new([0x32; 16])?;
+    let selector = Id::new([0x33; 16])?;
+    let mut previous = [0; 32];
+    let mut history = Vec::with_capacity(records as usize);
+    for sequence in 1..=u64::from(records) {
+        let op = Operation::seal(
+            Id::new(u128::from(sequence).to_be_bytes())?,
+            vault,
+            device,
+            sequence,
+            previous,
+            Vec::new(),
+            selector,
+            &key,
+            Nonce::chunk(&[0x42; 16], sequence),
+            b"benchmark operation",
+        )?
+        .sign(&signer);
+        previous = op.digest();
+        history.push(op.encode());
+    }
+    let times = measure(iterations, || {
+        let mut head = [0; 32];
+        for (sequence, bytes) in (1u64..).zip(&history) {
+            let op = Operation::decode(bytes)?;
+            op.verify_signature(&verifier)?;
+            ensure!(
+                op.device_sequence() == sequence && op.previous_operation_hash() == &head,
+                AuthenticationFailed,
+                "history chain is inconsistent"
+            );
+            head = op.digest();
+        }
+        Ok(())
+    })?;
+    println!(
+        "{records} operations, {} bytes, {iterations} verification passes",
+        history.iter().map(Vec::len).sum::<usize>()
+    );
+    println!(
+        "p50 {:.1} ms, p95 {:.1} ms, p99 {:.1} ms",
+        millis(times.quantile(0.50)),
+        millis(times.quantile(0.95)),
+        millis(times.quantile(0.99))
+    );
+    Ok(())
+}

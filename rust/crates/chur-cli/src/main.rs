@@ -223,6 +223,15 @@ enum BenchAction {
         #[arg(long, default_value_t = 8)]
         samples: usize,
     },
+    /// Measure verification of a chain of signed sync operations.
+    SignedHistory {
+        /// Number of operations in the chain.
+        #[arg(long, default_value_t = 1024)]
+        records: u32,
+        /// Number of complete verification passes.
+        #[arg(long, default_value_t = 8)]
+        samples: usize,
+    },
     /// Time the Argon2id profiles against the interactive target.
     Argon2 {
         /// Samples per profile.
@@ -455,6 +464,10 @@ fn run() -> Result<(), String> {
                 samples,
             } => bench::chunk_sizes(object_bytes, samples)
                 .map_err(|error| format!("chunk-size benchmark: {error}")),
+            BenchAction::SignedHistory { records, samples } => {
+                bench::signed_history(records, samples)
+                    .map_err(|error| format!("signed history benchmark: {error}"))
+            }
             BenchAction::Argon2 { samples } => {
                 bench::argon2(samples).map_err(|error| format!("Argon2id benchmark: {error}"))
             }

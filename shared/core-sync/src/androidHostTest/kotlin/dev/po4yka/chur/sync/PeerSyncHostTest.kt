@@ -5,12 +5,28 @@ import dev.po4yka.chur.ffi.*
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.file.Files
+import kotlinx.serialization.json.Json
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
 import kotlin.test.*
 
 /** Real encrypted vaults, JNI, and direct TCP; no service, mock transport, or account. */
 class PeerSyncHostTest {
+    @Test
+    fun a_full_native_history_page_fits_one_transport_frame_and_preserves_the_signed_bytes() {
+        val signed = ByteArray(HISTORY_PAGE_MAX - 16) { 0x81.toByte() }
+        val native = number(1u, 4) + number(8u, 8) + record(signed)
+        val message = Json.encodeToString(PeerMessage.serializer(), PeerMessage("history", history = encodeHistoryPage(native)))
+        assertTrue(message.encodeToByteArray().size < 4 * 1024 * 1024)
+        val received = Json.decodeFromString(PeerMessage.serializer(), message)
+        val page = decodeHistoryPage(received.history, 7u, 8u)
+        assertEquals(8uL, page.lastSequence)
+        assertContentEquals(record(signed), page.stagedBytes)
+        assertFailsWith<IllegalArgumentException> { decodeHistoryPage(received.history, 8u, 9u) }
+        assertFailsWith<IllegalArgumentException> { decodeHistoryPage(received.history, 6u, 8u) }
+        assertFailsWith<IllegalArgumentException> { encodeHistoryPage(native + 0.toByte()) }
+    }
+
     @Test
     fun paired_devices_transfer_originals_and_album_edits_in_both_directions_and_reconnect() = runBlocking {
         val directory = Files.createTempDirectory("chur-peer-sync-").toFile()
@@ -34,6 +50,10 @@ class PeerSyncHostTest {
             ChurVault.closeSession(target.session)
             target.session = ChurVault.unlockWithPassword(target.runtime, PASSWORD.encodeToByteArray())
             assertFalse(right.refresh())
+            val oldInvitation = "127.0.0.1:1#" + "00".repeat(32)
+            assertEquals(ChurStatus.UNSUPPORTED_VERSION, assertFailsWith<ChurFailure> {
+                right.connect(oldInvitation)
+            }.status)
             val original = ByteArray(800_000) { (it % 251).toByte() }
             val first = import(source.session, directory, original)
             val album = ChurVault.createAlbum(source.session, "From first device")

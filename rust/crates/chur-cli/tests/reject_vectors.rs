@@ -235,25 +235,25 @@ fn run(vector_id: &str, case: &Case<'_>) -> Result<()> {
                 ))
             }
         }
-        "operation-v1-version-two" | "operation-v1-truncated-signature" => {
+        "operation-v2-rejects-classical" | "operation-v2-truncated-signature" => {
             Operation::decode(&case.bytes("record")).map(|_| ())
         }
-        "operation-v1-modified-signature" => Operation::decode(&case.bytes("record"))
+        "operation-v2-modified-signature" => Operation::decode(&case.bytes("record"))
             .and_then(|operation| operation.verify_signature(&case.fixed("signing_public_key"))),
-        "operation-v1-hpke-suite-two" => {
+        "operation-v2-classical-hpke-suite" => {
             EnrollmentRecord::decode(&case.bytes("record")).map(|_| ())
         }
-        "operation-v1-compacted-checkpoint" => {
+        "operation-v2-compacted-checkpoint" => {
             Checkpoint::decode(&case.bytes("record")).map(|_| ())
         }
-        "operation-v1-self-issued-revocation" => {
+        "operation-v2-self-issued-revocation" => {
             RevocationRecord::decode(&case.bytes("record")).map(|_| ())
         }
-        "collection-grant-v1-modified-signature" => CollectionGrant::decode(&case.bytes("record"))
+        "collection-grant-v2-modified-signature" => CollectionGrant::decode(&case.bytes("record"))
             .and_then(|grant| {
                 grant.verify_sender_signature(&case.fixed("sender_signing_public_key"))
             }),
-        "collection-grant-v1-unknown-hpke-profile" => {
+        "collection-grant-v2-unknown-hpke-profile" => {
             CollectionGrant::decode(&case.bytes("record")).map(|_| ())
         }
         _ => panic!("reject vector {vector_id} has no reader case in this test"),

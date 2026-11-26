@@ -47,6 +47,7 @@ fn install_hook() {
 ///
 /// Returns `fallback` when the body panics. Every caller states a fallback the
 /// host refuses, so containment is visible to the host rather than silent.
+#[cfg(any(feature = "vault", test))]
 pub(crate) fn guard<T>(fallback: T, body: impl FnOnce() -> T) -> T {
     install_hook();
     catch_unwind(AssertUnwindSafe(body)).unwrap_or(fallback)
@@ -75,6 +76,7 @@ pub(crate) fn guard_status(body: impl FnOnce() -> chur_core::Result<()>) -> i32 
 /// [`ChurStatus::InternalFailure`], and the handle that owned the call is
 /// invalidated so a later call on it also fails. An ordinary error result is
 /// not a panic, so the handle survives it.
+#[cfg(feature = "vault")]
 pub(crate) fn guard_status_for(
     handle: crate::registry::Handle,
     body: impl FnOnce() -> chur_core::Result<()>,
@@ -145,6 +147,7 @@ mod tests {
     }
 
     /// Registers one operation handle the test owns and closes at the end.
+    #[cfg(feature = "vault")]
     fn registered_handle() -> (
         crate::registry::Handle,
         crate::registry::Handle,
@@ -174,6 +177,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "vault")]
     fn a_panicking_call_invalidates_the_handle_that_owned_it() {
         let (handle, runtime, path) = registered_handle();
         assert_eq!(
@@ -192,6 +196,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "vault")]
     fn an_ordinary_error_does_not_invalidate_the_handle() {
         let (handle, runtime, path) = registered_handle();
         assert_eq!(

@@ -10,7 +10,7 @@ use chur_media::peer_transport::{FRAME_MAX, Peer};
 /// Operates one ephemeral connection owned by an unlocked vault session.
 /// Commands: listen=1, connect=2, poll=3, send=4, receive=5, close=6, flush=7,
 /// signed device history=8, authenticated device=9, pairing evidence=10,
-/// object key for the peer=11, and object ciphertext range=12.
+/// object key for the peer=11, object ciphertext range=12, confirm delivered history=13.
 /// Frames, history, keys, and ciphertext move only after the peer proved its
 /// enrolled device key, and each such command checks the current membership again.
 /// Nothing is persisted by the transport.
@@ -40,10 +40,10 @@ pub unsafe extern "C" fn chur_peer_call(
                     Some(1) => 34,
                     Some(3 | 7) => 1,
                     Some(5) => FRAME_MAX + 1,
-                    Some(8) => FRAME_MAX / 8,
+                    Some(8) => FRAME_MAX / 2,
                     Some(9) if input.len() == 1 => 16,
-                    Some(10) => 8192,
-                    Some(11) => 346,
+                    Some(10) => 16 * 1024,
+                    Some(11) => chur_sync_protocol::object_grant::ObjectKeyGrant::LEN,
                     Some(12) => crate::sharing_publish::RANGE_MAX as usize,
                     _ => 0,
                 },
@@ -202,7 +202,7 @@ fn dispatch(
                 if sequence > until {
                     break;
                 }
-                if size + 12 + record.len() > FRAME_MAX / 8 {
+                if size + 12 + record.len() > FRAME_MAX / 2 {
                     ensure!(
                         !page.is_empty(),
                         ResourceLimitExceeded,
@@ -289,6 +289,16 @@ fn dispatch(
             writer.fixed(&crate::sharing_publish::object_range(
                 session, &object, offset, max_bytes,
             )?);
+        }
+        13 => {
+            let bytes = reader.variable(FRAME_MAX as u32)?;
+            reader.finish()?;
+            let device = authenticated(session, state)?;
+            chur_catalog::sync_engine::confirm_peer_history(
+                session.catalog_ref()?,
+                &device,
+                bytes,
+            )?;
         }
         _ => return Err(Error::new(ChurStatus::InvalidInput, "unknown peer command")),
     }

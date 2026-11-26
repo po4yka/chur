@@ -2,15 +2,15 @@
 
 use chur_core::limits::{COMMITMENT_LEN, ID_LEN, sync as bounds};
 use chur_core::{ChurStatus, Id, Result, ensure};
+use chur_crypto::post_quantum::{SIGNATURE_LEN, VERIFY_LEN};
 use chur_crypto::{Commitment, commit, commit::Committer, tuple::tag};
 use chur_format::codec::{Reader, Writer};
 
-use crate::operation::{DeviceSigningKey, PROTOCOL_VERSION_V1, verify_ed25519};
+use crate::operation::{DeviceSigningKey, PROTOCOL_VERSION_V2, verify_device_signature};
 
-const SIGNATURE_LEN: usize = 64;
 const FIXED_FIELDS_LEN: usize = 2 + (ID_LEN * 2) + 8 + 8 + (COMMITMENT_LEN * 3) + 4 + SIGNATURE_LEN;
 
-/// V1 retains operation history and therefore carries no compacted catalog snapshot.
+/// The internal sync profile retains operation history and therefore carries no compacted catalog snapshot.
 pub const UNCOMPACTED_CATALOG_STATE_COMMITMENT: Commitment = [0; COMMITMENT_LEN];
 
 /// Commits to every current collection epoch in ascending collection-id order.
@@ -158,8 +158,8 @@ impl Checkpoint {
     }
 
     /// Verifies the issuer signature.
-    pub fn verify_signature(&self, verifying_key: &[u8; 32]) -> Result<()> {
-        verify_ed25519(verifying_key, &self.signature, &self.signing_bytes())
+    pub fn verify_signature(&self, verifying_key: &[u8; VERIFY_LEN]) -> Result<()> {
+        verify_device_signature(verifying_key, &self.signature, &self.signing_bytes())
     }
 
     /// The portable commitment to the complete signed checkpoint.
@@ -198,7 +198,7 @@ impl Checkpoint {
     pub const fn collection_epoch_commitment(&self) -> &Commitment {
         &self.collection_epoch_commitment
     }
-    /// V1 uncompacted-state sentinel.
+    /// Uncompacted-state sentinel.
     #[must_use]
     pub const fn catalog_state_commitment(&self) -> &Commitment {
         &self.catalog_state_commitment
@@ -211,7 +211,7 @@ impl Checkpoint {
             FIXED_FIELDS_LEN + (self.heads.len() * bounds::CHECKPOINT_HEAD_LEN),
         );
         writer
-            .u16(PROTOCOL_VERSION_V1)
+            .u16(PROTOCOL_VERSION_V2)
             .id(&self.vault_id)
             .id(&self.issuer_device_id)
             .u64(self.issuer_device_sequence)
@@ -239,7 +239,7 @@ impl Checkpoint {
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let mut reader = Reader::new(bytes, ChurStatus::NonCanonicalEncoding);
         ensure!(
-            reader.u16()? == PROTOCOL_VERSION_V1,
+            reader.u16()? == PROTOCOL_VERSION_V2,
             UnsupportedVersion,
             "checkpoint protocol version is not supported"
         );
@@ -382,7 +382,7 @@ mod tests {
             .verify_signature(&key.verifying_key())
             .expect("signature");
         let encoded = checkpoint.encode();
-        assert_eq!(encoded.len(), 270);
+        assert_eq!(encoded.len(), 3515);
         assert_eq!(
             Checkpoint::decode(&encoded).expect("decode").encode(),
             encoded

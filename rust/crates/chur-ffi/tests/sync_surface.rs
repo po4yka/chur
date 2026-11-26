@@ -57,54 +57,38 @@ fn locked_stage_is_validated_and_removed_after_unlock() {
     };
     let mut runtime = 0;
     assert_eq!(unsafe { chur_runtime_open(&config, &mut runtime) }, 0);
+    let stage = |kind, bytes: &[u8]| unsafe {
+        chur_sync_stage(
+            runtime,
+            vault_id.as_bytes().as_ptr(),
+            kind,
+            2,
+            bytes.as_ptr(),
+            bytes.len() as u32,
+        )
+    };
     let bytes = operation.encode();
-    assert_eq!(
-        unsafe {
-            chur_sync_stage(
-                runtime,
-                vault_id.as_bytes().as_ptr(),
-                1,
-                2,
-                bytes.as_ptr(),
-                bytes.len() as u32,
-            )
-        },
-        0
-    );
-    let mut page = Vec::new();
-    page.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+    assert_eq!(stage(1, &bytes), 0);
+    let mut page = (bytes.len() as u32).to_be_bytes().to_vec();
     page.extend_from_slice(&bytes);
-    page.extend_from_slice(&3u32.to_be_bytes());
-    page.extend_from_slice(&[1, 2, 3]);
-    let mut malformed = page.clone();
-    malformed.pop();
+    let legacy = include_bytes!("../../../../test-vectors/internal-pq/classical-operation.bin");
+    let mut mixed = page.clone();
+    mixed.extend_from_slice(&(legacy.len() as u32).to_be_bytes());
+    mixed.extend_from_slice(legacy);
     assert_eq!(
-        unsafe {
-            chur_sync_stage(
-                runtime,
-                vault_id.as_bytes().as_ptr(),
-                3,
-                2,
-                malformed.as_ptr(),
-                malformed.len() as u32,
-            )
-        },
-        chur_core::ChurStatus::InvalidInput as i32
+        stage(3, &mixed),
+        chur_core::ChurStatus::UnsupportedVersion.as_i32()
+    );
+    let mut invalid_signature = bytes;
+    *invalid_signature.last_mut().expect("signature") ^= 1;
+    page.extend_from_slice(&(invalid_signature.len() as u32).to_be_bytes());
+    page.extend_from_slice(&invalid_signature);
+    assert_eq!(
+        stage(3, &page[..page.len() - 1]),
+        chur_core::ChurStatus::InvalidInput.as_i32()
     );
     for _ in 0..2 {
-        assert_eq!(
-            unsafe {
-                chur_sync_stage(
-                    runtime,
-                    vault_id.as_bytes().as_ptr(),
-                    3,
-                    2,
-                    page.as_ptr(),
-                    page.len() as u32,
-                )
-            },
-            0
-        );
+        assert_eq!(stage(3, &page), 0);
     }
     let unlock = ChurUnlockRequestV1 {
         factor: 1,
@@ -129,6 +113,10 @@ fn locked_stage_is_validated_and_removed_after_unlock() {
     assert_eq!(unsafe { chur_sync_process(session, 2, &mut report) }, 0);
     assert_eq!(report.duplicates, 1);
     assert_eq!(report.rejected, 1);
+    assert_eq!(
+        report.first_rejection,
+        chur_core::ChurStatus::AuthenticationFailed.as_i32()
+    );
     assert_eq!(report.pending, 0);
     assert_eq!(report.reserved, [0; 4]);
     assert_eq!(unsafe { chur_session_close(session) }, 0);

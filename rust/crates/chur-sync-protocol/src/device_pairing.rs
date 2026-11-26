@@ -1,16 +1,19 @@
 //! Device enrollment requests and authority-signed HPKE approvals.
 
 use chur_core::{ChurStatus, Error, Id, Result, ensure};
+use chur_crypto::post_quantum::{
+    ENCAP_LEN, RECIPIENT_LEN, SIGNATURE_LEN, VERIFY_LEN, validate_encapsulation, validate_recipient,
+};
 use chur_crypto::{Key, commit, tuple::tag};
 use chur_format::codec::{Reader, Writer};
 use hpke::aead::ChaCha20Poly1305;
 use hpke::kdf::HkdfSha256;
-use hpke::kem::X25519HkdfSha256;
+use hpke::kem::XWing;
 use hpke::{Deserializable, Kem as KemTrait, OpModeR, OpModeS, Serializable};
 use zeroize::Zeroizing;
 
 use crate::identity::{self, DeviceIdentity};
-use crate::operation::verify_ed25519;
+use crate::operation::{PROTOCOL_VERSION_V2, verify_device_signature};
 
 /// Largest complete pairing approval, including its public authority proof.
 pub const APPROVAL_MAX: usize = 16_777_216;
@@ -23,15 +26,15 @@ pub struct PairingRequest {
     vault_id: Id,
     request_id: Id,
     device_id: Id,
-    signing_public_key: [u8; 32],
-    hpke_public_key: [u8; 32],
+    signing_public_key: [u8; VERIFY_LEN],
+    hpke_public_key: [u8; RECIPIENT_LEN],
     root_proof: [u8; 32],
-    signature: [u8; 64],
+    signature: [u8; SIGNATURE_LEN],
 }
 
 impl PairingRequest {
     /// Exact canonical request size.
-    pub const LEN: usize = 210;
+    pub const LEN: usize = 2 + 3 * 16 + VERIFY_LEN + RECIPIENT_LEN + 32 + SIGNATURE_LEN;
 
     /// Creates a public request. Private identity material stays with the caller.
     pub fn new(
@@ -48,7 +51,7 @@ impl PairingRequest {
             signing_public_key: identity.signing_public_key(),
             hpke_public_key: identity.hpke_public_key(),
             root_proof: [0; 32],
-            signature: [0; 64],
+            signature: [0; SIGNATURE_LEN],
         };
         request.root_proof =
             commit::keyed_commit(root, tag::PAIRING_ROOT_PROOF, &request.identity_body());
@@ -76,7 +79,8 @@ impl PairingRequest {
 
     /// Authenticates new-key possession for the fingerprint inspection UI.
     pub fn verify(&self) -> Result<()> {
-        verify_ed25519(
+        validate_recipient(&self.hpke_public_key)?;
+        verify_device_signature(
             &self.signing_public_key,
             &self.signature,
             &tagged(tag::PAIRING_REQUEST_SIGNATURE, &self.unsigned()),
@@ -100,12 +104,12 @@ impl PairingRequest {
     }
     /// Requested signing public key.
     #[must_use]
-    pub const fn signing_public_key(&self) -> &[u8; 32] {
+    pub const fn signing_public_key(&self) -> &[u8; VERIFY_LEN] {
         &self.signing_public_key
     }
     /// Requested HPKE public key.
     #[must_use]
-    pub const fn hpke_public_key(&self) -> &[u8; 32] {
+    pub const fn hpke_public_key(&self) -> &[u8; RECIPIENT_LEN] {
         &self.hpke_public_key
     }
     /// Fingerprint to compare through a separate trusted channel.
@@ -127,7 +131,7 @@ impl PairingRequest {
     fn identity_body(&self) -> Vec<u8> {
         let mut writer = Writer::new();
         writer
-            .u16(1)
+            .u16(PROTOCOL_VERSION_V2)
             .id(&self.vault_id)
             .id(&self.request_id)
             .id(&self.device_id)
@@ -156,7 +160,7 @@ impl PairingRequest {
         );
         let mut reader = Reader::new(bytes, ChurStatus::InvalidInput);
         ensure!(
-            reader.u16()? == 1,
+            reader.u16()? == PROTOCOL_VERSION_V2,
             UnsupportedVersion,
             "pairing request version differs"
         );
@@ -183,9 +187,9 @@ pub struct PairingApproval {
     issuer_device_id: Id,
     request_digest: [u8; 32],
     authority_records: Vec<Vec<u8>>,
-    encapsulated_key: [u8; 32],
+    encapsulated_key: [u8; ENCAP_LEN],
     ciphertext: Vec<u8>,
-    signature: [u8; 64],
+    signature: [u8; SIGNATURE_LEN],
 }
 
 impl PairingApproval {
@@ -210,21 +214,21 @@ impl PairingApproval {
             issuer_device_id,
             request_digest: request.digest(),
             authority_records,
-            encapsulated_key: [0; 32],
+            encapsulated_key: [0; ENCAP_LEN],
             ciphertext: Vec::new(),
-            signature: [0; 64],
+            signature: [0; SIGNATURE_LEN],
         };
         let context = tagged(tag::PAIRING_APPROVAL_HPKE, &approval.header()?);
-        let recipient =
-            <X25519HkdfSha256 as KemTrait>::PublicKey::from_bytes(request.hpke_public_key())
-                .map_err(|_| {
-                    Error::new(
-                        ChurStatus::AuthenticationFailed,
-                        "pairing recipient key is invalid",
-                    )
-                })?;
+        validate_recipient(request.hpke_public_key())?;
+        let recipient = <XWing as KemTrait>::PublicKey::from_bytes(request.hpke_public_key())
+            .map_err(|_| {
+                Error::new(
+                    ChurStatus::AuthenticationFailed,
+                    "pairing recipient key is invalid",
+                )
+            })?;
         let (encapsulated, ciphertext) =
-            hpke::single_shot_seal::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>(
+            hpke::single_shot_seal::<ChaCha20Poly1305, HkdfSha256, XWing>(
                 &OpModeS::Base,
                 &recipient,
                 &context,
@@ -275,8 +279,8 @@ impl PairingApproval {
         &self.authority_records
     }
     /// Verifies the authorizing signature before credentials become visible.
-    pub fn verify(&self, issuer_key: &[u8; 32]) -> Result<()> {
-        verify_ed25519(
+    pub fn verify(&self, issuer_key: &[u8; VERIFY_LEN]) -> Result<()> {
+        verify_device_signature(
             issuer_key,
             &self.signature,
             &tagged(tag::PAIRING_APPROVAL_SIGNATURE, &self.unsigned()?),
@@ -286,27 +290,26 @@ impl PairingApproval {
     pub fn open(
         &self,
         recipient: &DeviceIdentity,
-        issuer_key: &[u8; 32],
+        issuer_key: &[u8; VERIFY_LEN],
     ) -> Result<Zeroizing<Vec<u8>>> {
         self.verify(issuer_key)?;
         let context = tagged(tag::PAIRING_APPROVAL_HPKE, &self.header()?);
-        let private =
-            <X25519HkdfSha256 as KemTrait>::PrivateKey::from_bytes(recipient.hpke_secret_bytes())
-                .map_err(|_| {
+        let private = <XWing as KemTrait>::PrivateKey::from_bytes(recipient.hpke_secret_bytes())
+            .map_err(|_| {
                 Error::new(
                     ChurStatus::AuthenticationFailed,
                     "pairing private identity is invalid",
                 )
             })?;
-        let encapsulated =
-            <X25519HkdfSha256 as KemTrait>::EncappedKey::from_bytes(&self.encapsulated_key)
-                .map_err(|_| {
-                    Error::new(
-                        ChurStatus::AuthenticationFailed,
-                        "pairing encapsulation is invalid",
-                    )
-                })?;
-        hpke::single_shot_open::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>(
+        validate_encapsulation(&self.encapsulated_key)?;
+        let encapsulated = <XWing as KemTrait>::EncappedKey::from_bytes(&self.encapsulated_key)
+            .map_err(|_| {
+                Error::new(
+                    ChurStatus::AuthenticationFailed,
+                    "pairing encapsulation is invalid",
+                )
+            })?;
+        hpke::single_shot_open::<ChaCha20Poly1305, HkdfSha256, XWing>(
             &OpModeR::Base,
             &private,
             &encapsulated,
@@ -325,7 +328,7 @@ impl PairingApproval {
     fn header(&self) -> Result<Vec<u8>> {
         let mut writer = Writer::new();
         writer
-            .u16(1)
+            .u16(PROTOCOL_VERSION_V2)
             .id(&self.vault_id)
             .id(&self.request_id)
             .id(&self.recipient_device_id)
@@ -360,7 +363,7 @@ impl PairingApproval {
         );
         let mut reader = Reader::new(bytes, ChurStatus::InvalidInput);
         ensure!(
-            reader.u16()? == 1,
+            reader.u16()? == PROTOCOL_VERSION_V2,
             UnsupportedVersion,
             "pairing approval version differs"
         );

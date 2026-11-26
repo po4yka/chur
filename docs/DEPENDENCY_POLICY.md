@@ -146,7 +146,11 @@ A skill synchronisation updates both hashes and the commit, and the checker is w
 - **Data and telemetry:** the crate receives in-process public/private key bytes, fixed grant context, and one collection key. It performs no application file, process, network, permission, logging, analytics, or telemetry operation. Its randomness feature reads the operating-system CSPRNG for sender encapsulation.
 - **Update and removal:** updates require RFC and Chur vectors, malformed-input tests, lockfile and advisory review, all mobile targets, and explicit protocol compatibility review. Removal requires another reviewed RFC 9180 implementation; a local construction is not an acceptable fallback.
 
-### Ktor Client 3.5.2, shared sync transport
+### Internal post-quantum prototype
+
+ADR-0073 authorizes the mlkem feature of rust-hpke 0.15.1 and RustCrypto ml-dsa 0.1.2 for this internal build. Cargo.lock pins ml-kem 0.3.4, x-wing 0.1.1 and module-lattice 0.2.4. Preserve the MIT or Apache-2.0 license notices. Rust owns the keys on all targets. Pure Rust implementations avoid a new native cryptography toolchain and an OS-version split at iOS 18. Apple CryptoKit and the Go standard library provide independent implementations for interoperability testing. A dependency update requires advisory, feature and license review, independent vectors and a mobile build. Independent review of the selected implementations and protocol is open. [Decision and release conditions](adr/0073-internal-post-quantum-profile.md)
+
+## Ktor Client 3.5.2, shared sync transport
 
 - **Capability:** a Kotlin Multiplatform HTTP client that transfers opaque Phase 3 records and ciphertext on Android and iOS.
 - **Alternatives:** the Kotlin standard library has no network client. Separate native clients would duplicate the wire boundary and behavior.

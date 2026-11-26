@@ -846,11 +846,9 @@ fn restore_inner(
                 VaultCorrupt,
                 "the backup identity envelope has the wrong length"
             );
-            Some(read_payload_bounded(
-                source,
-                slot,
-                DeviceIdentityEnvelope::LEN as u64,
-            )?)
+            let payload = read_payload_bounded(source, slot, DeviceIdentityEnvelope::LEN as u64)?;
+            DeviceIdentityEnvelope::decode(&payload)?;
+            Some(payload)
         }
         None => None,
     };

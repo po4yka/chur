@@ -5,17 +5,13 @@
 //! a grant, and deletion also destroys unused prekeys that a server could have
 //! used for a withheld grant.
 
+use crate::operation::{DeviceSigningKey, PROTOCOL_VERSION_V2, verify_device_signature};
 use chur_core::{ChurStatus, Error, Id, Result, ensure};
+use chur_crypto::post_quantum::{
+    self, ENCAP_LEN, ENVELOPE_LEN, RECIPIENT_LEN, SIGNATURE_LEN, VERIFY_LEN,
+};
 use chur_crypto::{Key, commit::commit, tuple::tag};
 use chur_format::codec::{Reader, Writer};
-use hpke::aead::ChaCha20Poly1305;
-use hpke::kdf::HkdfSha256;
-use hpke::kem::X25519HkdfSha256;
-use hpke::{Deserializable, Kem as KemTrait, OpModeR, OpModeS, Serializable};
-use x25519_dalek::{PublicKey, StaticSecret};
-use zeroize::Zeroizing;
-
-use crate::operation::{DeviceSigningKey, verify_ed25519};
 
 /// Maximum public requests returned in one transport page.
 pub const PREKEYS_MAX: usize = 64;
@@ -31,13 +27,13 @@ pub struct ObjectPrekey {
     recipient_vault_id: Id,
     recipient_device_id: Id,
     generation: u64,
-    public_key: [u8; 32],
-    signature: [u8; 64],
+    public_key: [u8; RECIPIENT_LEN],
+    signature: [u8; SIGNATURE_LEN],
 }
 
 impl ObjectPrekey {
     /// Exact encoded record length.
-    pub const LEN: usize = 226;
+    pub const LEN: usize = 130 + RECIPIENT_LEN + SIGNATURE_LEN;
 
     /// Signs a fresh prekey. Its private bytes must stay outside signed logs.
     #[expect(
@@ -65,7 +61,7 @@ impl ObjectPrekey {
             InvalidInput,
             "prekey generation is zero"
         );
-        let public_key = PublicKey::from(&StaticSecret::from(*private_key.expose())).to_bytes();
+        let public_key = post_quantum::recipient_public(private_key)?;
         let mut record = Self {
             prekey_id,
             collection_id,
@@ -76,29 +72,16 @@ impl ObjectPrekey {
             recipient_device_id,
             generation,
             public_key,
-            signature: [0; 64],
+            signature: [0; SIGNATURE_LEN],
         };
         record.signature = signing_key.sign_bytes(&record.signature_input());
         Ok(record)
     }
 
     /// Authenticates the prekey against its enrolled device signing key.
-    pub fn verify(&self, signing_public_key: &[u8; 32]) -> Result<()> {
-        verify_ed25519(signing_public_key, &self.signature, &self.signature_input())?;
-        ensure!(
-            self.has_contributory_public_key(),
-            AuthenticationFailed,
-            "object prekey public key is noncontributory"
-        );
-        Ok(())
-    }
-
-    fn has_contributory_public_key(&self) -> bool {
-        // A fixed, clamped scalar is a public validation probe, not key
-        // material. Every low-order X25519 encoding yields the identity here.
-        StaticSecret::from([0x5a; 32])
-            .diffie_hellman(&PublicKey::from(self.public_key))
-            .was_contributory()
+    pub fn verify(&self, signing_public_key: &[u8; VERIFY_LEN]) -> Result<()> {
+        verify_device_signature(signing_public_key, &self.signature, &self.signature_input())?;
+        post_quantum::validate_recipient(&self.public_key)
     }
 
     /// Stable prekey identifier.
@@ -145,7 +128,7 @@ impl ObjectPrekey {
     fn fields(&self) -> Vec<u8> {
         let mut writer = Writer::new();
         writer
-            .u16(1)
+            .u16(PROTOCOL_VERSION_V2)
             .id(&self.prekey_id)
             .id(&self.collection_id)
             .id(&self.object_id)
@@ -179,7 +162,7 @@ impl ObjectPrekey {
         );
         let mut reader = Reader::new(bytes, ChurStatus::NonCanonicalEncoding);
         ensure!(
-            reader.u16()? == 1,
+            reader.u16()? == PROTOCOL_VERSION_V2,
             UnsupportedVersion,
             "object prekey version is unsupported"
         );
@@ -206,9 +189,9 @@ impl ObjectPrekey {
             "object prekey generation is zero"
         );
         ensure!(
-            record.has_contributory_public_key(),
+            post_quantum::validate_recipient(&record.public_key).is_ok(),
             NonCanonicalEncoding,
-            "object prekey public key is noncontributory"
+            "object prekey public key is invalid"
         );
         Ok(record)
     }
@@ -228,14 +211,13 @@ pub struct ObjectKeyGrant {
     object_generation: u64,
     container_commitment: [u8; 32],
     object_key_commitment: [u8; 32],
-    encapsulated_key: [u8; 32],
-    wrapped_key: [u8; 48],
-    signature: [u8; 64],
+    envelope: [u8; ENVELOPE_LEN],
+    signature: [u8; SIGNATURE_LEN],
 }
 
 impl ObjectKeyGrant {
     /// Exact encoded length.
-    pub const LEN: usize = 346;
+    pub const LEN: usize = 202 + ENVELOPE_LEN + SIGNATURE_LEN;
 
     /// Wraps an object key without using a stable device HPKE secret.
     #[expect(
@@ -263,24 +245,9 @@ impl ObjectKeyGrant {
             prekey,
             object_key,
         )?;
-        let recipient = <X25519HkdfSha256 as KemTrait>::PublicKey::from_bytes(&prekey.public_key)
-            .map_err(|_| {
-            Error::new(ChurStatus::AuthenticationFailed, "object prekey is invalid")
-        })?;
         let context = tagged(tag::OBJECT_KEY_GRANT_HPKE, &grant.context());
-        let (encapsulated, ciphertext) =
-            hpke::single_shot_seal::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>(
-                &OpModeS::Base,
-                &recipient,
-                &context,
-                object_key.expose(),
-                &context,
-            )
-            .map_err(|_| Error::new(ChurStatus::InternalFailure, "object grant sealing failed"))?;
-        grant
-            .encapsulated_key
-            .copy_from_slice(encapsulated.to_bytes().as_ref());
-        grant.wrapped_key.copy_from_slice(&ciphertext);
+        grant.envelope =
+            post_quantum::seal_key(&prekey.public_key, &context, &context, object_key)?;
         grant.signature = signing_key.sign_bytes(&grant.signature_input());
         Ok(grant)
     }
@@ -299,11 +266,6 @@ impl ObjectKeyGrant {
         prekey: &ObjectPrekey,
         object_key: &Key,
     ) -> Result<Self> {
-        ensure!(
-            prekey.has_contributory_public_key(),
-            AuthenticationFailed,
-            "object prekey public key is noncontributory"
-        );
         ensure!(
             object_generation != 0
                 && object_generation != u64::MAX
@@ -329,9 +291,8 @@ impl ObjectKeyGrant {
                 &object_id,
                 object_key,
             ),
-            encapsulated_key: [0; 32],
-            wrapped_key: [0; 48],
-            signature: [0; 64],
+            envelope: [0; ENVELOPE_LEN],
+            signature: [0; SIGNATURE_LEN],
         })
     }
 
@@ -352,7 +313,7 @@ impl ObjectKeyGrant {
         prekey: &ObjectPrekey,
         object_key: &Key,
         signing_key: &DeviceSigningKey,
-        ephemeral: [u8; 32],
+        ephemeral: [u8; 64],
     ) -> Result<Self> {
         let mut grant = Self::prepare(
             grant_id,
@@ -364,14 +325,19 @@ impl ObjectKeyGrant {
             prekey,
             object_key,
         )?;
-        let recipient = <X25519HkdfSha256 as KemTrait>::PublicKey::from_bytes(&prekey.public_key)
-            .map_err(|_| {
-            Error::new(ChurStatus::AuthenticationFailed, "object prekey is invalid")
-        })?;
+        use hpke::aead::ChaCha20Poly1305;
+        use hpke::kdf::HkdfSha256;
+        use hpke::kem::XWing;
+        use hpke::{Deserializable, Kem, OpModeS, Serializable};
+        post_quantum::validate_recipient(&prekey.public_key)?;
+        let recipient =
+            <XWing as Kem>::PublicKey::from_bytes(&prekey.public_key).map_err(|_| {
+                Error::new(ChurStatus::AuthenticationFailed, "object prekey is invalid")
+            })?;
         let context = tagged(tag::OBJECT_KEY_GRANT_HPKE, &grant.context());
         let mut rng = crate::grant::FixedTestRng::new(ephemeral);
-        let (encapsulated, ciphertext) =
-            hpke::single_shot_seal_with_rng::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>(
+        let (encapsulation, ciphertext) =
+            hpke::single_shot_seal_with_rng::<ChaCha20Poly1305, HkdfSha256, XWing>(
                 &OpModeS::Base,
                 &recipient,
                 &context,
@@ -385,17 +351,15 @@ impl ObjectKeyGrant {
                     "test object grant sealing failed",
                 )
             })?;
-        grant
-            .encapsulated_key
-            .copy_from_slice(encapsulated.to_bytes().as_ref());
-        grant.wrapped_key.copy_from_slice(&ciphertext);
+        encapsulation.write_exact(&mut grant.envelope[..ENCAP_LEN]);
+        grant.envelope[ENCAP_LEN..].copy_from_slice(&ciphertext);
         grant.signature = signing_key.sign_bytes(&grant.signature_input());
         Ok(grant)
     }
 
     /// Authenticates the immutable sender and recipient bindings.
-    pub fn verify(&self, signing_public_key: &[u8; 32]) -> Result<()> {
-        verify_ed25519(signing_public_key, &self.signature, &self.signature_input())
+    pub fn verify(&self, signing_public_key: &[u8; VERIFY_LEN]) -> Result<()> {
+        verify_device_signature(signing_public_key, &self.signature, &self.signature_input())
     }
 
     /// Opens with the disposable prekey only. A stable identity cannot open it.
@@ -403,7 +367,7 @@ impl ObjectKeyGrant {
         &self,
         prekey: &ObjectPrekey,
         private_key: &Key,
-        signing_public_key: &[u8; 32],
+        signing_public_key: &[u8; VERIFY_LEN],
     ) -> Result<Key> {
         self.verify(signing_public_key)?;
         ensure!(
@@ -414,50 +378,12 @@ impl ObjectKeyGrant {
                 && self.container_commitment == *prekey.container_commitment()
                 && self.recipient_vault_id == *prekey.recipient_vault_id()
                 && self.recipient_device_id == *prekey.recipient_device_id()
-                && PublicKey::from(&StaticSecret::from(*private_key.expose())).to_bytes()
-                    == prekey.public_key,
+                && post_quantum::recipient_public(private_key)? == prekey.public_key,
             AuthenticationFailed,
             "object grant prekey binding is invalid"
         );
-        let secret = <X25519HkdfSha256 as KemTrait>::PrivateKey::from_bytes(private_key.expose())
-            .map_err(|_| {
-            Error::new(
-                ChurStatus::AuthenticationFailed,
-                "object prekey secret is invalid",
-            )
-        })?;
-        let encapsulated =
-            <X25519HkdfSha256 as KemTrait>::EncappedKey::from_bytes(&self.encapsulated_key)
-                .map_err(|_| {
-                    Error::new(
-                        ChurStatus::AuthenticationFailed,
-                        "object grant encapsulation is invalid",
-                    )
-                })?;
         let context = tagged(tag::OBJECT_KEY_GRANT_HPKE, &self.context());
-        let bytes = Zeroizing::new(
-            hpke::single_shot_open::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>(
-                &OpModeR::Base,
-                &secret,
-                &encapsulated,
-                &context,
-                &self.wrapped_key,
-                &context,
-            )
-            .map_err(|_| {
-                Error::new(
-                    ChurStatus::AuthenticationFailed,
-                    "object grant authentication failed",
-                )
-            })?,
-        );
-        ensure!(
-            bytes.len() == 32,
-            NonCanonicalEncoding,
-            "object grant key length is invalid"
-        );
-        let mut key = Key::zeroed();
-        key.expose_mut().copy_from_slice(&bytes);
+        let key = post_quantum::open_key(private_key, &context, &context, &self.envelope)?;
         ensure!(
             object_key_commitment(&self.collection_id, &self.object_id, &key)
                 == self.object_key_commitment,
@@ -526,7 +452,7 @@ impl ObjectKeyGrant {
     fn context(&self) -> Vec<u8> {
         let mut writer = Writer::new();
         writer
-            .u16(1)
+            .u16(PROTOCOL_VERSION_V2)
             .id(&self.grant_id)
             .id(&self.collection_id)
             .id(&self.object_id)
@@ -542,8 +468,7 @@ impl ObjectKeyGrant {
     }
     fn unsigned(&self) -> Vec<u8> {
         let mut bytes = self.context();
-        bytes.extend_from_slice(&self.encapsulated_key);
-        bytes.extend_from_slice(&self.wrapped_key);
+        bytes.extend_from_slice(&self.envelope);
         bytes
     }
     fn signature_input(&self) -> Vec<u8> {
@@ -565,7 +490,7 @@ impl ObjectKeyGrant {
         );
         let mut reader = Reader::new(bytes, ChurStatus::NonCanonicalEncoding);
         ensure!(
-            reader.u16()? == 1,
+            reader.u16()? == PROTOCOL_VERSION_V2,
             UnsupportedVersion,
             "object grant version is unsupported"
         );
@@ -581,11 +506,21 @@ impl ObjectKeyGrant {
             object_generation: reader.u64()?,
             container_commitment: reader.fixed()?,
             object_key_commitment: reader.fixed()?,
-            encapsulated_key: reader.fixed()?,
-            wrapped_key: reader.fixed()?,
+            envelope: reader.fixed()?,
             signature: reader.fixed()?,
         };
         reader.finish()?;
+        let enc = record.envelope.first_chunk::<ENCAP_LEN>().ok_or_else(|| {
+            Error::new(
+                ChurStatus::NonCanonicalEncoding,
+                "object grant encapsulation is incomplete",
+            )
+        })?;
+        ensure!(
+            post_quantum::validate_encapsulation(enc).is_ok(),
+            NonCanonicalEncoding,
+            "object grant encapsulation is invalid"
+        );
         ensure!(
             record.object_generation != 0
                 && record.object_generation != u64::MAX
@@ -644,11 +579,21 @@ mod tests {
         let mut field_modulus = [0xff; 32];
         field_modulus[0] = 0xed;
         field_modulus[31] = 0x7f;
-        for public_key in [[0; 32], one, high_bit_zero, field_modulus] {
+        let mut invalid_keys = [[0; 32], one, high_bit_zero, field_modulus]
+            .map(|point| {
+                let mut public_key = valid.public_key;
+                public_key[RECIPIENT_LEN - 32..].copy_from_slice(&point);
+                public_key
+            })
+            .to_vec();
+        let mut invalid_mlkem = valid.public_key;
+        invalid_mlkem[..3].fill(0xff);
+        invalid_keys.push(invalid_mlkem);
+        for public_key in invalid_keys {
             let mut invalid = valid.clone();
             invalid.public_key = public_key;
             invalid.signature = recipient.sign_bytes(&invalid.signature_input());
-            verify_ed25519(
+            verify_device_signature(
                 &recipient.verifying_key(),
                 &invalid.signature,
                 &invalid.signature_input(),
@@ -737,7 +682,18 @@ mod tests {
             &signer,
         )
         .expect("grant");
-        assert_eq!(grant.encode().len(), ObjectKeyGrant::LEN);
+        assert_eq!(prekey.encode().len(), 4655);
+        assert_eq!(grant.encode().len(), 4679);
+        for offset in [0, ENCAP_LEN - 32] {
+            let mut altered = grant.clone();
+            altered.envelope[offset] ^= 1;
+            altered.signature = signer.sign_bytes(&altered.signature_input());
+            assert!(
+                altered
+                    .open(&prekey, &private, &signer.verifying_key())
+                    .is_err()
+            );
+        }
         let decoded = ObjectKeyGrant::decode(&grant.encode()).expect("decode grant");
         assert_eq!(
             decoded

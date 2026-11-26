@@ -2,6 +2,8 @@
 
 > **Status:** Generated. `manifest.json` and the fixtures beside it are produced by `chur-cli` and are the interoperability authority for v1 canonical bytes.
 
+This internal checkout retains the v1 index schema. The v2 entries describe the post-quantum records. The draft uses the base commit in `spec_commit` and identifies the working-tree generator in `generator.commit`. [Internal profile](../../docs/adr/0073-internal-post-quantum-profile.md)
+
 **TEST-ONLY — NEVER USE FOR REAL VAULTS.** Every key, salt, nonce, password, and recovery secret in this directory is a fixed constant chosen so the output is reproducible. None of them protects anything.
 
 ## Regenerating and checking

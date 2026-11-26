@@ -62,7 +62,7 @@ final class ShareViewController: UIViewController {
         }
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let inbox = try IncomingShareInbox.open(forApplication: false)
+                let inbox = try IncomingShareInbox.openForExtension()
                 let batch = try inbox.begin()
                 var completed = false
                 defer { if !completed { inbox.discard(batch) } }

@@ -135,7 +135,7 @@ The installed API 37 image's Goldfish H.264 host decoder fails to transfer a `Me
 On macOS, run the host helpers and compile the full iOS app and embedded extension:
 
 ```sh
-swift test --package-path apps/iosApp
+apps/iosApp/test-host.sh
 xcodebuild -project apps/iosApp/Chur.xcodeproj -scheme Chur \
   -configuration Debug -destination 'generic/platform=iOS Simulator' \
   CODE_SIGNING_ALLOWED=NO build

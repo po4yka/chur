@@ -141,7 +141,7 @@ A label selects key bytes, so a label is never redefined. A different purpose, t
 
 The presence of a label does not mean that a feature uses it. v1 does not derive `CatalogRecordRootKey` or `MetadataKey`: object metadata, album names, captions and notes are columns of the catalog, which SQLCipher alone protects under `CatalogDatabaseKey`. Current metadata search, private-note search, and OCR/content search use SQLCipher under `CatalogDatabaseKey`. They do not derive `SearchKey` or `OcrKey` for the index. Face and semantic embeddings remain unimplemented. Future encrypted segment storage would require its own approved contract; do not reinterpret these frozen labels.
 
-The iOS Share Extension receiving key is outside this vault hierarchy. The main app owns an independent device-local RSA private key and publishes only its public key to the App Group. Per-item AES keys protect temporary incoming ciphertext; they are never vault keys or exported credential slots. See [ADR-0064](../adr/0064-receive-system-shares.md).
+The iOS Share Extension receiving key is outside this vault hierarchy. The main app owns an independent device-local X-Wing seed in the internal profile and publishes only its public key to the App Group. Per-item AES keys protect temporary incoming ciphertext; they are never vault keys or exported credential slots. [ADR-0073](../adr/0073-internal-post-quantum-profile.md)
 
 ## 4. Security collection keys
 

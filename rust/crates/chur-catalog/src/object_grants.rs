@@ -688,10 +688,10 @@ mod tests {
             .iter()
             .map(|bytes| Operation::decode(bytes).expect("operation"))
             .collect::<Vec<_>>();
-        let membership_records = [sharing_service::IssuerMembershipRecord::Enrollment(
+        let membership_records = [sharing_service::IssuerMembershipRecord::from(
             source_enrollment.clone(),
         )];
-        let member_records = [sharing_service::IssuerMembershipRecord::Enrollment(
+        let member_records = [sharing_service::IssuerMembershipRecord::from(
             member_enrollment.clone(),
         )];
         let member_evidence = sync_log::records_after(&member_db, member_enrollment.device_id(), 0)

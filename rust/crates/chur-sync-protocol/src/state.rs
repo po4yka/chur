@@ -1,10 +1,12 @@
 //! Accepted device-membership state.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use chur_core::limits::sync as bounds;
 use chur_core::{ChurStatus, Error, Id, Result, ensure};
 use chur_crypto::Commitment;
+use chur_crypto::post_quantum::{RECIPIENT_LEN, VERIFY_LEN};
 
 use crate::membership::{EnrollmentRecord, RevocationRecord};
 
@@ -25,25 +27,26 @@ pub enum DeviceStatus {
 /// Public identity and acceptance status of one known device.
 #[derive(Clone)]
 pub struct DeviceMembership {
-    signing_public_key: [u8; 32],
-    historical_signing_keys: Vec<[u8; 32]>,
-    hpke_public_key: [u8; 32],
+    signing_public_key: Arc<[u8; VERIFY_LEN]>,
+    historical_signing_keys: Vec<Arc<[u8; VERIFY_LEN]>>,
+    hpke_public_key: [u8; RECIPIENT_LEN],
     status: DeviceStatus,
 }
 
 impl DeviceMembership {
     /// Current signing public key.
     #[must_use]
-    pub const fn signing_public_key(&self) -> &[u8; 32] {
+    pub fn signing_public_key(&self) -> &[u8; VERIFY_LEN] {
         &self.signing_public_key
     }
     /// Keys accepted for historical device signatures, current key first.
-    pub fn signing_public_keys(&self) -> impl Iterator<Item = &[u8; 32]> {
-        std::iter::once(&self.signing_public_key).chain(self.historical_signing_keys.iter())
+    pub fn signing_public_keys(&self) -> impl Iterator<Item = &[u8; VERIFY_LEN]> {
+        std::iter::once(self.signing_public_key.as_ref())
+            .chain(self.historical_signing_keys.iter().map(AsRef::as_ref))
     }
     /// Current recipient-encryption public key.
     #[must_use]
-    pub const fn hpke_public_key(&self) -> &[u8; 32] {
+    pub const fn hpke_public_key(&self) -> &[u8; RECIPIENT_LEN] {
         &self.hpke_public_key
     }
     /// Current acceptance status.
@@ -59,7 +62,8 @@ pub struct MembershipState {
     vault_id: Id,
     generation: u64,
     commitment: Commitment,
-    devices: BTreeMap<Id, DeviceMembership>,
+    // Each historical snapshot shares unchanged device records and public keys.
+    devices: BTreeMap<Id, Arc<DeviceMembership>>,
 }
 
 impl MembershipState {
@@ -74,12 +78,12 @@ impl MembershipState {
         let mut devices = BTreeMap::new();
         devices.insert(
             *record.device_id(),
-            DeviceMembership {
-                signing_public_key: *record.signing_public_key(),
+            Arc::new(DeviceMembership {
+                signing_public_key: Arc::new(*record.signing_public_key()),
                 historical_signing_keys: Vec::new(),
                 hpke_public_key: *record.hpke_public_key(),
                 status: DeviceStatus::Active,
-            },
+            }),
         );
         Ok(Self {
             vault_id: *record.vault_id(),
@@ -131,18 +135,18 @@ impl MembershipState {
                 "enrollment reuses a device identifier"
             );
             historical_signing_keys.clone_from(&existing.historical_signing_keys);
-            if existing.signing_public_key != *record.signing_public_key() {
-                historical_signing_keys.push(existing.signing_public_key);
+            if existing.signing_public_key.as_ref() != record.signing_public_key() {
+                historical_signing_keys.push(Arc::clone(&existing.signing_public_key));
             }
         }
         self.devices.insert(
             *record.device_id(),
-            DeviceMembership {
-                signing_public_key: *record.signing_public_key(),
+            Arc::new(DeviceMembership {
+                signing_public_key: Arc::new(*record.signing_public_key()),
                 historical_signing_keys,
                 hpke_public_key: *record.hpke_public_key(),
                 status: DeviceStatus::Active,
-            },
+            }),
         );
         self.generation = record.membership_generation();
         self.commitment = record.commitment();
@@ -181,7 +185,7 @@ impl MembershipState {
             AuthenticationFailed,
             "revocation target is not active"
         );
-        target.status = DeviceStatus::Revoked {
+        Arc::make_mut(target).status = DeviceStatus::Revoked {
             sequence: record.final_accepted_device_sequence(),
             digest: *record.final_accepted_operation_digest(),
         };
@@ -208,7 +212,7 @@ impl MembershipState {
     /// Known device identity and status.
     #[must_use]
     pub fn device(&self, device_id: &Id) -> Option<&DeviceMembership> {
-        self.devices.get(device_id)
+        self.devices.get(device_id).map(AsRef::as_ref)
     }
 
     /// Latest accepted membership generation.
@@ -229,7 +233,7 @@ impl MembershipState {
         &self.vault_id
     }
 
-    fn active_signing_key(&self, device_id: &Id) -> Result<&[u8; 32]> {
+    fn active_signing_key(&self, device_id: &Id) -> Result<&[u8; VERIFY_LEN]> {
         let device = self.devices.get(device_id).ok_or_else(|| {
             Error::new(
                 ChurStatus::AuthenticationFailed,
@@ -284,16 +288,23 @@ mod tests {
     #[test]
     fn enrollment_then_revocation_advance_one_authenticated_chain() {
         let issuer_key = DeviceSigningKey::from_seed([1; 32]);
-        let initial = EnrollmentRecord::initial(id(1), id(2), issuer_key.verifying_key(), [3; 32])
-            .expect("initial")
-            .sign(&issuer_key);
+        let initial = EnrollmentRecord::initial(
+            id(1),
+            id(2),
+            issuer_key.verifying_key(),
+            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([3; 32]))
+                .expect("test recipient key"),
+        )
+        .expect("initial")
+        .sign(&issuer_key);
         let mut state = MembershipState::bootstrap(&initial).expect("bootstrap");
         let second_key = DeviceSigningKey::from_seed([4; 32]);
         let enrollment = EnrollmentRecord::new(
             id(1),
             id(5),
             second_key.verifying_key(),
-            [6; 32],
+            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([6; 32]))
+                .expect("test recipient key"),
             2,
             id(2),
             2,
@@ -319,9 +330,15 @@ mod tests {
     #[test]
     fn rejected_membership_records_do_not_advance_state() {
         let issuer_key = DeviceSigningKey::from_seed([1; 32]);
-        let initial = EnrollmentRecord::initial(id(1), id(2), issuer_key.verifying_key(), [3; 32])
-            .expect("initial")
-            .sign(&issuer_key);
+        let initial = EnrollmentRecord::initial(
+            id(1),
+            id(2),
+            issuer_key.verifying_key(),
+            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([3; 32]))
+                .expect("test recipient key"),
+        )
+        .expect("initial")
+        .sign(&issuer_key);
         let mut state = MembershipState::bootstrap(&initial).expect("bootstrap");
         let candidate_key = DeviceSigningKey::from_seed([4; 32]);
 
@@ -329,7 +346,8 @@ mod tests {
             id(1),
             id(5),
             candidate_key.verifying_key(),
-            [6; 32],
+            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([6; 32]))
+                .expect("test recipient key"),
             2,
             id(2),
             2,
@@ -350,7 +368,8 @@ mod tests {
             id(1),
             id(5),
             candidate_key.verifying_key(),
-            [6; 32],
+            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([6; 32]))
+                .expect("test recipient key"),
             2,
             id(2),
             2,
@@ -373,16 +392,23 @@ mod tests {
     #[test]
     fn key_rotation_keeps_the_old_verification_key() {
         let old_key = DeviceSigningKey::from_seed([1; 32]);
-        let initial = EnrollmentRecord::initial(id(1), id(2), old_key.verifying_key(), [3; 32])
-            .expect("initial")
-            .sign(&old_key);
+        let initial = EnrollmentRecord::initial(
+            id(1),
+            id(2),
+            old_key.verifying_key(),
+            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([3; 32]))
+                .expect("test recipient key"),
+        )
+        .expect("initial")
+        .sign(&old_key);
         let mut state = MembershipState::bootstrap(&initial).expect("bootstrap");
         let new_key = DeviceSigningKey::from_seed([4; 32]);
         let rotation = EnrollmentRecord::new(
             id(1),
             id(2),
             new_key.verifying_key(),
-            [5; 32],
+            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([5; 32]))
+                .expect("test recipient key"),
             2,
             id(2),
             2,
@@ -406,9 +432,15 @@ mod tests {
     #[test]
     fn enrollment_beyond_the_active_device_limit_is_rejected() {
         let key = DeviceSigningKey::from_seed([1; 32]);
-        let initial = EnrollmentRecord::initial(id(1), id(2), key.verifying_key(), [3; 32])
-            .expect("initial")
-            .sign(&key);
+        let initial = EnrollmentRecord::initial(
+            id(1),
+            id(2),
+            key.verifying_key(),
+            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([3; 32]))
+                .expect("test recipient key"),
+        )
+        .expect("initial")
+        .sign(&key);
         let mut state = MembershipState::bootstrap(&initial).expect("bootstrap");
         let mut previous = initial.commitment();
         let enroll = |device: u8, generation: u64, previous| {
@@ -416,7 +448,8 @@ mod tests {
                 id(1),
                 id(device),
                 key.verifying_key(),
-                [6; 32],
+                chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([6; 32]))
+                    .expect("test recipient key"),
                 generation,
                 id(2),
                 generation,

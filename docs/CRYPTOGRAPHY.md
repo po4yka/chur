@@ -2,7 +2,7 @@
 
 > **Status:** Proposed normative cryptographic design  
 > **Audience:** Rust, mobile-platform, application, security, protocol, and audit contributors  
-> **Last updated:** 2026-10-16\
+> **Last updated:** 2026-11-26\
 > **Related:** [README](../README.md) · [Architecture](ARCHITECTURE.md)
 
 Chur is a local-first encrypted media vault for Android and iOS. This document defines the cryptographic model that supports the product and system architecture: key ownership, key derivation, key wrapping, password processing, media encryption, integrity verification, platform-protected unlock, recovery, synchronization, and collection sharing.
@@ -11,7 +11,7 @@ The central rule is:
 
 > **Rust owns the private cryptographic lifecycle. Android Keystore and iOS Keychain gate access to short root-key material. Kotlin, Compose, SwiftUI, UIKit, Room, DataStore, media players, and network clients never become independent owners of the vault protocol.**
 
-Chur has a pre-release implementation. Versioned formats, catalog extensions through v10, and native ABI 2.24 exist. The design has not received an independent security audit and MUST NOT be represented as production-proven cryptography. [Implementation status](IMPLEMENTATION_STATUS.md) and [release gates](assurance/RELEASE_GATES.md) distinguish code and local validation from approval.
+This branch implements the internal post-quantum profile with native ABI 8.4. It requires MLKEM768-X25519 for recipient encryption and ML-DSA-65 for device signatures. The classical v1 sections below document the earlier protocol. Public release requires independent review and device acceptance. [Internal profile](adr/0073-internal-post-quantum-profile.md) · [Release gates](assurance/RELEASE_GATES.md)
 
 ---
 
@@ -73,7 +73,7 @@ This document does not define:
 
 ### Platform ingress exception
 
-[ADR-0064](adr/0064-receive-system-shares.md) defines a separate iOS temporary receiving transport. The main app generates an independent RSA-2048 Keychain key; the extension receives only its public key. Each item has a fresh AES-256-GCM key wrapped with RSA-OAEP-SHA256, authenticated encrypted metadata, and ordered authenticated chunks. This transport does not define vault bytes, use a vault root, create a new vault suite, or change the collection-grant HPKE suite. The app authenticates the whole envelope before native import. See [the host contract](../apps/iosApp/README.md#incoming-system-shares) for nonces, AAD, limits, protection classes, and the trusted extension assumption.
+The iOS Share Extension uses the temporary receiving transport from [ADR-0064](adr/0064-receive-system-shares.md). In the [internal post-quantum profile](adr/0073-internal-post-quantum-profile.md), the app stores a separate X-Wing seed in its own device-local Keychain. The extension receives the public key and seals a fresh 256-bit item key with X-Wing HPKE, HKDF-SHA256 and ChaCha20-Poly1305. AES-256-GCM protects metadata and ordered content chunks. The app authenticates the complete envelope before native import. [Apple host contract](../apps/iosApp/README.md#incoming-system-shares)
 
 ## 3. Cryptographic ownership boundary
 
@@ -161,7 +161,7 @@ The primary guarantee is confidentiality and integrity of private data while the
 
 ## 6. Cryptographic profile v1
 
-The initial local-vault profile is intentionally narrow.
+This table describes the historical v1 profile. ADR-0073 replaces its recipient and signature algorithms in internal builds.
 
 | Purpose | Chur v1 direction | Status |
 | --- | --- | --- |
@@ -1800,6 +1800,8 @@ A former member who already obtained an object key keeps access only to cipherte
 
 ## 56. Post-quantum readiness
 
+The internal prototype uses a separate vault policy, recipient suite and device signature. Its format and release conditions are in [ADR-0073](adr/0073-internal-post-quantum-profile.md). The v1 description below applies to the classical profile.
+
 Bulk media encryption already uses 256-bit symmetric keys and does not require an immediate post-quantum replacement.
 
 Post-quantum concerns primarily affect:
@@ -2530,5 +2532,7 @@ The resulting system provides:
 The design remains provisional until canonical encodings, parameters, vectors, fault tests, and an independent audit are complete.
 
 ## Direct peer session keys
+
+The internal build uses CHURP2P3. The following paragraph specifies the previous classical transport. [Peer protocol v3](sync/PEER_PROTOCOL_V3.md)
 
 The foreground peer transport has a separate `CHURP2P2` namespace; version-1 `CHURP2P1` hellos are refused. A one-use 256-bit invitation secret, two fresh 32-byte challenges, and an ephemeral X25519 exchange derive direction-separated 32-byte keys and a session binding with HKDF-SHA-256 under the registered `chur/v1/peer/*` labels. Each device signs the transcript hash and the binding with its enrolled Ed25519 device key, and Rust verifies that signature against the enrolled key before any synchronization data moves. The transcript hash, info labels, nonce construction, frame bound, and sequence AAD are specified in [SYNC_PROTOCOL_V1.md](sync/SYNC_PROTOCOL_V1.md). These keys are never used for vault, collection, or object encryption and never enter a portable backup. The ephemeral private keys are erased after the handshake, so disclosure of an invitation after a session does not permit decryption of its recorded traffic. Object and operation encryption retain their independent native keys and verification requirements.

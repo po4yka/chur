@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! CatalogExportV1 =
-//!     export_version:u16              0x0001
+//!     export_version:u16              0xff01
 //!     catalog_format_version:u16
 //!     catalog_generation:u64
 //!     table_count:u32
@@ -43,7 +43,7 @@
 use chur_core::{Result, bail, ensure, limits::backup as bounds};
 use zeroize::Zeroizing;
 
-use crate::constants::CATALOG_EXPORT_VERSION_V1;
+use crate::constants::CATALOG_EXPORT_VERSION_INTERNAL_PQ;
 
 /// The `value_type` of a NULL.
 pub const VALUE_NULL: u8 = 0x01;
@@ -136,7 +136,7 @@ impl<F: FnMut(&[u8], bool) -> Result<()>> ExportWriter<F> {
             sink,
             buffer: Zeroizing::new(Vec::with_capacity(bounds::CATALOG_EXPORT_CHUNK_LEN + 64)),
         };
-        writer.push(&CATALOG_EXPORT_VERSION_V1.to_be_bytes())?;
+        writer.push(&CATALOG_EXPORT_VERSION_INTERNAL_PQ.to_be_bytes())?;
         writer.push(&header.catalog_format_version.to_be_bytes())?;
         writer.push(&header.catalog_generation.to_be_bytes())?;
         writer.push(&header.table_count.to_be_bytes())?;
@@ -302,7 +302,7 @@ impl<S: ChunkSource> ExportReader<S> {
         };
         let export_version = u16::from_be_bytes(reader.fixed()?);
         ensure!(
-            export_version == CATALOG_EXPORT_VERSION_V1,
+            export_version == CATALOG_EXPORT_VERSION_INTERNAL_PQ,
             UnsupportedVersion,
             "the catalog export declares an unsupported export version"
         );

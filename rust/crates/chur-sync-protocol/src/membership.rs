@@ -2,18 +2,16 @@
 
 use chur_core::limits::COMMITMENT_LEN;
 use chur_core::{ChurStatus, Id, Result, ensure};
+use chur_crypto::post_quantum::{RECIPIENT_LEN, SIGNATURE_LEN, VERIFY_LEN, validate_recipient};
 use chur_crypto::{Commitment, commit, tuple::tag};
 use chur_format::codec::{Reader, Writer};
 
-use crate::operation::{DeviceSigningKey, PROTOCOL_VERSION_V1, verify_ed25519};
+use crate::identity::{HPKE_SUITE_V2, SIGNING_SUITE_V2};
+use crate::operation::{DeviceSigningKey, PROTOCOL_VERSION_V2, verify_device_signature};
 
-const SIGNATURE_LEN: usize = 64;
-const PUBLIC_KEY_LEN: usize = 32;
-const SIGNING_SUITE_V1: u16 = 1;
-const HPKE_SUITE_V1: u16 = 1;
-const SYNC_V1_CAPABILITY: u64 = 1;
-const ENROLLMENT_LEN: usize = 270;
-const REVOCATION_LEN: usize = 194;
+const SYNC_V2_CAPABILITY: u64 = 2;
+const ENROLLMENT_LEN: usize = 142 + VERIFY_LEN + RECIPIENT_LEN + SIGNATURE_LEN;
+const REVOCATION_LEN: usize = 130 + SIGNATURE_LEN;
 const ENROLLMENT_KIND: u8 = 1;
 const REVOCATION_KIND: u8 = 2;
 
@@ -22,8 +20,8 @@ const REVOCATION_KIND: u8 = 2;
 pub struct EnrollmentRecord {
     vault_id: Id,
     device_id: Id,
-    signing_public_key: [u8; PUBLIC_KEY_LEN],
-    hpke_public_key: [u8; PUBLIC_KEY_LEN],
+    signing_public_key: [u8; VERIFY_LEN],
+    hpke_public_key: [u8; RECIPIENT_LEN],
     created_sequence: u64,
     issuer_device_id: Id,
     membership_generation: u64,
@@ -40,8 +38,8 @@ impl EnrollmentRecord {
     pub fn initial(
         vault_id: Id,
         device_id: Id,
-        signing_public_key: [u8; PUBLIC_KEY_LEN],
-        hpke_public_key: [u8; PUBLIC_KEY_LEN],
+        signing_public_key: [u8; VERIFY_LEN],
+        hpke_public_key: [u8; RECIPIENT_LEN],
     ) -> Result<Self> {
         Self::from_fields(
             vault_id,
@@ -65,8 +63,8 @@ impl EnrollmentRecord {
     pub fn new(
         vault_id: Id,
         device_id: Id,
-        signing_public_key: [u8; PUBLIC_KEY_LEN],
-        hpke_public_key: [u8; PUBLIC_KEY_LEN],
+        signing_public_key: [u8; VERIFY_LEN],
+        hpke_public_key: [u8; RECIPIENT_LEN],
         created_sequence: u64,
         issuer_device_id: Id,
         membership_generation: u64,
@@ -94,8 +92,8 @@ impl EnrollmentRecord {
     fn from_fields(
         vault_id: Id,
         device_id: Id,
-        signing_public_key: [u8; PUBLIC_KEY_LEN],
-        hpke_public_key: [u8; PUBLIC_KEY_LEN],
+        signing_public_key: [u8; VERIFY_LEN],
+        hpke_public_key: [u8; RECIPIENT_LEN],
         created_sequence: u64,
         issuer_device_id: Id,
         membership_generation: u64,
@@ -127,27 +125,27 @@ impl EnrollmentRecord {
     }
 
     /// Verifies the issuer signature.
-    pub fn verify_signature(&self, key: &[u8; PUBLIC_KEY_LEN]) -> Result<()> {
-        verify_ed25519(
+    pub fn verify_signature(&self, key: &[u8; VERIFY_LEN]) -> Result<()> {
+        verify_device_signature(
             key,
             &self.signature,
             &signing_bytes(tag::SYNC_ENROLLMENT, &self.encode()),
         )
     }
 
-    /// Encodes the fixed 270-byte record.
+    /// Encodes the fixed-size enrollment record.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut writer = Writer::with_capacity(ENROLLMENT_LEN);
         writer
-            .u16(PROTOCOL_VERSION_V1)
+            .u16(PROTOCOL_VERSION_V2)
             .id(&self.vault_id)
             .id(&self.device_id)
-            .u16(SIGNING_SUITE_V1)
+            .u16(SIGNING_SUITE_V2)
             .fixed(&self.signing_public_key)
-            .u16(HPKE_SUITE_V1)
+            .u16(HPKE_SUITE_V2)
             .fixed(&self.hpke_public_key)
-            .u64(SYNC_V1_CAPABILITY)
+            .u64(SYNC_V2_CAPABILITY)
             .u64(self.created_sequence)
             .id(&self.issuer_device_id)
             .u64(self.membership_generation)
@@ -161,26 +159,26 @@ impl EnrollmentRecord {
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let mut reader = Reader::new(bytes, ChurStatus::NonCanonicalEncoding);
         ensure!(
-            reader.u16()? == PROTOCOL_VERSION_V1,
+            reader.u16()? == PROTOCOL_VERSION_V2,
             UnsupportedVersion,
             "enrollment protocol version is not supported"
         );
         let vault_id = reader.id()?;
         let device_id = reader.id()?;
         ensure!(
-            reader.u16()? == SIGNING_SUITE_V1,
-            UnsupportedVersion,
+            reader.u16()? == SIGNING_SUITE_V2,
+            UnsupportedSuite,
             "enrollment signing suite is not supported"
         );
-        let signing_public_key = reader.fixed::<PUBLIC_KEY_LEN>()?;
+        let signing_public_key = reader.fixed::<VERIFY_LEN>()?;
         ensure!(
-            reader.u16()? == HPKE_SUITE_V1,
-            UnsupportedVersion,
+            reader.u16()? == HPKE_SUITE_V2,
+            UnsupportedSuite,
             "enrollment HPKE suite is not supported"
         );
-        let hpke_public_key = reader.fixed::<PUBLIC_KEY_LEN>()?;
+        let hpke_public_key = reader.fixed::<RECIPIENT_LEN>()?;
         ensure!(
-            reader.u64()? == SYNC_V1_CAPABILITY,
+            reader.u64()? == SYNC_V2_CAPABILITY,
             UnsupportedVersion,
             "enrollment capabilities are not supported"
         );
@@ -228,12 +226,12 @@ impl EnrollmentRecord {
     }
     /// Enrolled signing key.
     #[must_use]
-    pub const fn signing_public_key(&self) -> &[u8; PUBLIC_KEY_LEN] {
+    pub const fn signing_public_key(&self) -> &[u8; VERIFY_LEN] {
         &self.signing_public_key
     }
     /// Enrolled HPKE public key.
     #[must_use]
-    pub const fn hpke_public_key(&self) -> &[u8; PUBLIC_KEY_LEN] {
+    pub const fn hpke_public_key(&self) -> &[u8; RECIPIENT_LEN] {
         &self.hpke_public_key
     }
     /// Issuer operation sequence that carries this record.
@@ -259,14 +257,14 @@ impl EnrollmentRecord {
 
     fn validate(&self) -> Result<()> {
         ensure!(
-            self.signing_public_key != [0; PUBLIC_KEY_LEN],
+            self.signing_public_key != [0; VERIFY_LEN],
             NonCanonicalEncoding,
             "enrollment signing key is zero"
         );
         ensure!(
-            self.hpke_public_key != [0; PUBLIC_KEY_LEN],
+            validate_recipient(&self.hpke_public_key).is_ok(),
             NonCanonicalEncoding,
-            "enrollment HPKE key is zero"
+            "enrollment hybrid recipient key is invalid"
         );
         ensure!(
             self.created_sequence != 0 && self.membership_generation != 0,
@@ -346,20 +344,20 @@ impl RevocationRecord {
     }
 
     /// Verifies the issuer signature.
-    pub fn verify_signature(&self, key: &[u8; PUBLIC_KEY_LEN]) -> Result<()> {
-        verify_ed25519(
+    pub fn verify_signature(&self, key: &[u8; VERIFY_LEN]) -> Result<()> {
+        verify_device_signature(
             key,
             &self.signature,
             &signing_bytes(tag::SYNC_REVOCATION, &self.encode()),
         )
     }
 
-    /// Encodes the fixed 194-byte record.
+    /// Encodes the fixed-size revocation record.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut writer = Writer::with_capacity(REVOCATION_LEN);
         writer
-            .u16(PROTOCOL_VERSION_V1)
+            .u16(PROTOCOL_VERSION_V2)
             .id(&self.vault_id)
             .id(&self.revoked_device_id)
             .u64(self.final_accepted_device_sequence)
@@ -375,7 +373,7 @@ impl RevocationRecord {
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let mut reader = Reader::new(bytes, ChurStatus::NonCanonicalEncoding);
         ensure!(
-            reader.u16()? == PROTOCOL_VERSION_V1,
+            reader.u16()? == PROTOCOL_VERSION_V2,
             UnsupportedVersion,
             "revocation protocol version is not supported"
         );
@@ -481,10 +479,24 @@ mod tests {
     #[test]
     fn initial_enrollment_is_signed_canonical_membership() {
         let key = DeviceSigningKey::from_seed([3; 32]);
-        let record = EnrollmentRecord::initial(id(1), id(2), key.verifying_key(), [4; 32])
+        let recipient =
+            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([4; 32]))
+                .expect("recipient key");
+        let record = EnrollmentRecord::initial(id(1), id(2), key.verifying_key(), recipient)
             .expect("record")
             .sign(&key);
-        assert_eq!(record.encode().len(), ENROLLMENT_LEN);
+        assert_eq!(record.encode().len(), 6619);
+        for offset in [34, 36 + VERIFY_LEN] {
+            let mut classical_suite = record.encode();
+            classical_suite[offset..offset + 2].copy_from_slice(&1u16.to_be_bytes());
+            assert_eq!(
+                EnrollmentRecord::decode(&classical_suite)
+                    .err()
+                    .expect("unsupported suite")
+                    .status(),
+                ChurStatus::UnsupportedSuite
+            );
+        }
         record
             .verify_signature(&key.verifying_key())
             .expect("signature");
@@ -503,7 +515,7 @@ mod tests {
         let record = RevocationRecord::new(id(1), id(2), 9, [3; 32], 2, id(4), [5; 32])
             .expect("record")
             .sign(&key);
-        assert_eq!(record.encode().len(), REVOCATION_LEN);
+        assert_eq!(record.encode().len(), 3439);
         record
             .verify_signature(&key.verifying_key())
             .expect("signature");

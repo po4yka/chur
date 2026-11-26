@@ -4,6 +4,7 @@
 //! canonical records when opening and writes the accepted record plus every
 //! projection in one SQLCipher transaction.
 
+use chur_crypto::post_quantum::{RECIPIENT_LEN, VERIFY_LEN};
 use std::collections::BTreeSet;
 
 use chur_core::{ChurStatus, Error, Id, Result, bail, ensure};
@@ -194,7 +195,7 @@ fn replay_chain(db: &CatalogDb, through: Option<u64>) -> Result<MembershipState>
 pub(crate) fn device_key_history(
     db: &CatalogDb,
     device_id: &Id,
-) -> Result<Vec<([u8; 32], [u8; 32])>> {
+) -> Result<Vec<([u8; VERIFY_LEN], [u8; RECIPIENT_LEN])>> {
     let state = load(db)?.ok_or_else(|| {
         Error::new(
             ChurStatus::RecoveryRequired,
@@ -685,7 +686,8 @@ fn validate_device_projections(db: &CatalogDb, state: &MembershipState) -> Resul
             "a device projection has no matching membership record"
         );
 
-        let expected_keys: BTreeSet<[u8; 32]> = membership.signing_public_keys().copied().collect();
+        let expected_keys: BTreeSet<[u8; VERIFY_LEN]> =
+            membership.signing_public_keys().copied().collect();
         let mut key_statement = db
             .connection()
             .prepare("SELECT public_key FROM sync_signing_keys WHERE device_id = ?1")
@@ -698,7 +700,7 @@ fn validate_device_projections(db: &CatalogDb, state: &MembershipState) -> Resul
         let mut stored_keys = BTreeSet::new();
         for key in keys {
             let key = key.map_err(|error| map_sqlite(error, "a signing key could not be read"))?;
-            let key: [u8; 32] = key.try_into().map_err(|_| {
+            let key: [u8; VERIFY_LEN] = key.try_into().map_err(|_| {
                 Error::new(
                     ChurStatus::CatalogCorrupt,
                     "a signing key has the wrong length",
@@ -770,9 +772,15 @@ mod tests {
     fn membership_replays_key_rotation_and_revocation_after_reopen() {
         let mut db = catalog();
         let first_key = DeviceSigningKey::from_seed([1; 32]);
-        let initial = EnrollmentRecord::initial(id(1), id(2), first_key.verifying_key(), [3; 32])
-            .expect("initial")
-            .sign(&first_key);
+        let initial = EnrollmentRecord::initial(
+            id(1),
+            id(2),
+            first_key.verifying_key(),
+            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([3; 32]))
+                .expect("test recipient key"),
+        )
+        .expect("initial")
+        .sign(&first_key);
         provision(&mut db, &initial).expect("provision");
 
         let peer_key = DeviceSigningKey::from_seed([4; 32]);
@@ -780,7 +788,8 @@ mod tests {
             id(1),
             id(5),
             peer_key.verifying_key(),
-            [6; 32],
+            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([6; 32]))
+                .expect("test recipient key"),
             2,
             id(2),
             2,
@@ -796,7 +805,8 @@ mod tests {
             id(1),
             id(2),
             rotated_key.verifying_key(),
-            [9; 32],
+            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([9; 32]))
+                .expect("test recipient key"),
             3,
             id(2),
             3,
@@ -832,16 +842,23 @@ mod tests {
     fn rejected_successor_changes_no_durable_membership_row() {
         let mut db = catalog();
         let key = DeviceSigningKey::from_seed([1; 32]);
-        let initial = EnrollmentRecord::initial(id(1), id(2), key.verifying_key(), [3; 32])
-            .expect("initial")
-            .sign(&key);
+        let initial = EnrollmentRecord::initial(
+            id(1),
+            id(2),
+            key.verifying_key(),
+            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([3; 32]))
+                .expect("test recipient key"),
+        )
+        .expect("initial")
+        .sign(&key);
         provision(&mut db, &initial).expect("provision");
         let peer_key = DeviceSigningKey::from_seed([4; 32]);
         let stale = EnrollmentRecord::new(
             id(1),
             id(5),
             peer_key.verifying_key(),
-            [6; 32],
+            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([6; 32]))
+                .expect("test recipient key"),
             2,
             id(2),
             2,
@@ -868,14 +885,23 @@ mod tests {
     fn a_tampered_device_projection_fails_closed() {
         let mut db = catalog();
         let key = DeviceSigningKey::from_seed([1; 32]);
-        let initial = EnrollmentRecord::initial(id(1), id(2), key.verifying_key(), [3; 32])
-            .expect("initial")
-            .sign(&key);
+        let initial = EnrollmentRecord::initial(
+            id(1),
+            id(2),
+            key.verifying_key(),
+            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([3; 32]))
+                .expect("test recipient key"),
+        )
+        .expect("initial")
+        .sign(&key);
         provision(&mut db, &initial).expect("provision");
         db.connection()
             .execute(
                 "UPDATE sync_devices SET signing_public_key = ?1 WHERE device_id = ?2",
-                params![[9u8; 32], id(2).as_bytes().as_slice()],
+                params![
+                    &[9u8; chur_crypto::post_quantum::VERIFY_LEN][..],
+                    id(2).as_bytes().as_slice()
+                ],
             )
             .expect("tamper");
         let Err(error) = load(&db) else {

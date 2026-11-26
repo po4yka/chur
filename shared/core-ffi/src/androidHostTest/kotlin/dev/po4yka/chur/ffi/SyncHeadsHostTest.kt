@@ -21,7 +21,10 @@ class SyncHeadsHostTest {
             assertContentEquals(identity.deviceId, first.deviceId)
             assertEquals(1uL, first.sequence)
 
-            ChurVault.stageSync(runtime, identity.vaultId, SyncRecordKind.OPERATION, 1, byteArrayOf(1, 2, 3))
+            val legacy = assertFailsWith<ChurFailure> {
+                ChurVault.stageSync(runtime, identity.vaultId, SyncRecordKind.OPERATION, 1, byteArrayOf(0, 1, 3))
+            }
+            assertEquals(ChurStatus.UNSUPPORTED_VERSION, legacy.status)
             val badPage = byteArrayOf(0, 0, 0, 1, 4, 0, 0, 0, 2, 5)
             val truncated = assertFailsWith<ChurFailure> {
                 ChurVault.stageSync(runtime, identity.vaultId, SyncRecordKind.OPERATION_PAGE, 1, badPage)
@@ -29,10 +32,14 @@ class SyncHeadsHostTest {
             assertEquals(ChurStatus.INVALID_INPUT, truncated.status)
             val page = byteArrayOf(0, 0, 0, 1, 4, 0, 0, 0, 1, 5)
             repeat(2) {
-                ChurVault.stageSync(runtime, identity.vaultId, SyncRecordKind.OPERATION_PAGE, 1, page)
+                val invalid = assertFailsWith<ChurFailure> {
+                    ChurVault.stageSync(runtime, identity.vaultId, SyncRecordKind.OPERATION_PAGE, 1, page)
+                }
+                assertEquals(ChurStatus.NON_CANONICAL_ENCODING, invalid.status)
             }
             val report = ChurVault.processSync(session, 2)
-            assertEquals(3L, report.rejected)
+            assertEquals(0L, report.rejected)
+            assertEquals(0L, report.pending)
             val after = ChurVault.syncHeads(session).single()
             assertContentEquals(first.deviceId, after.deviceId)
             assertEquals(first.sequence, after.sequence)

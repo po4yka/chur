@@ -2,61 +2,48 @@
 
 use chur_core::limits::{COMMITMENT_LEN, ID_LEN, sync as bounds};
 use chur_core::{ChurStatus, Error, Id, Result, ensure};
+use chur_crypto::post_quantum::{self, IdentitySigner, SIGNATURE_LEN, VERIFY_LEN};
 use chur_crypto::tuple::tag;
 use chur_crypto::{Commitment, Key, Nonce, aead, commit};
 use chur_format::codec::{Reader, Writer};
-use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use zeroize::Zeroizing;
 
-const SIGNATURE_LEN: usize = 64;
 const FIXED_FIELDS_LEN: usize = 2 + (ID_LEN * 4) + 8 + COMMITMENT_LEN + 4 + 4 + SIGNATURE_LEN;
 
-/// Sync protocol v1.
-pub const PROTOCOL_VERSION_V1: u16 = 0x0001;
+/// Internal sync protocol v2.
+pub const PROTOCOL_VERSION_V2: u16 = 0x0002;
 
-/// One portable Ed25519 device signing key.
-pub struct DeviceSigningKey(SigningKey);
+/// One portable ML-DSA-65 device signing key.
+pub struct DeviceSigningKey(IdentitySigner);
 
 impl DeviceSigningKey {
     /// Builds a signing key from its 32-byte seed.
     #[must_use]
     pub fn from_seed(seed: [u8; 32]) -> Self {
-        Self(SigningKey::from_bytes(&seed))
+        Self(IdentitySigner::from_seed(&seed))
     }
 
     /// The public verification key carried by device membership.
     #[must_use]
-    pub fn verifying_key(&self) -> [u8; 32] {
-        self.0.verifying_key().to_bytes()
+    pub fn verifying_key(&self) -> [u8; VERIFY_LEN] {
+        self.0.public()
     }
 
     pub(crate) fn seed_bytes(&self) -> Zeroizing<[u8; 32]> {
-        Zeroizing::new(self.0.to_bytes())
+        Zeroizing::new(*self.0.seed())
     }
 
     pub(crate) fn sign_bytes(&self, bytes: &[u8]) -> [u8; SIGNATURE_LEN] {
-        self.0.sign(bytes).to_bytes()
+        self.0.sign(bytes)
     }
 }
 
-pub(crate) fn verify_ed25519(
-    verifying_key: &[u8; 32],
+pub(crate) fn verify_device_signature(
+    verifying_key: &[u8; VERIFY_LEN],
     signature: &[u8; SIGNATURE_LEN],
     bytes: &[u8],
 ) -> Result<()> {
-    let key = VerifyingKey::from_bytes(verifying_key).map_err(|_| {
-        Error::new(
-            ChurStatus::AuthenticationFailed,
-            "device verification key is invalid",
-        )
-    })?;
-    key.verify_strict(bytes, &Signature::from_bytes(signature))
-        .map_err(|_| {
-            Error::new(
-                ChurStatus::AuthenticationFailed,
-                "device signature did not verify",
-            )
-        })
+    post_quantum::verify(verifying_key, bytes, signature)
 }
 
 /// One other device head observed by an operation's author.
@@ -100,7 +87,7 @@ pub struct Operation {
     observed_heads: Vec<ObservedHead>,
     key_selector: Id,
     encrypted_payload: Vec<u8>,
-    signature: [u8; 64],
+    signature: [u8; SIGNATURE_LEN],
 }
 
 impl Operation {
@@ -173,7 +160,7 @@ impl Operation {
         observed_heads: Vec<ObservedHead>,
         key_selector: Id,
         encrypted_payload: Vec<u8>,
-        signature: [u8; 64],
+        signature: [u8; SIGNATURE_LEN],
     ) -> Result<Self> {
         let operation = Self {
             operation_id,
@@ -223,8 +210,8 @@ impl Operation {
     ///
     /// Returns [`ChurStatus::AuthenticationFailed`] for any invalid key or
     /// signature.
-    pub fn verify_signature(&self, verifying_key: &[u8; 32]) -> Result<()> {
-        verify_ed25519(verifying_key, &self.signature, &self.signing_bytes())
+    pub fn verify_signature(&self, verifying_key: &[u8; VERIFY_LEN]) -> Result<()> {
+        verify_device_signature(verifying_key, &self.signature, &self.signing_bytes())
     }
 
     /// Opens and authenticates the private payload.
@@ -291,7 +278,7 @@ impl Operation {
 
     fn write_outer_fields(&self, writer: &mut Writer) {
         writer
-            .u16(PROTOCOL_VERSION_V1)
+            .u16(PROTOCOL_VERSION_V2)
             .id(&self.operation_id)
             .id(&self.vault_id)
             .id(&self.device_id)
@@ -325,7 +312,7 @@ impl Operation {
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let mut reader = Reader::new(bytes, ChurStatus::NonCanonicalEncoding);
         ensure!(
-            reader.u16()? == PROTOCOL_VERSION_V1,
+            reader.u16()? == PROTOCOL_VERSION_V2,
             UnsupportedVersion,
             "sync operation protocol version is not supported"
         );
@@ -450,12 +437,12 @@ mod tests {
             vec![ObservedHead::new(id(5), 7)],
             id(6),
             [vec![7; 24], vec![8; 16]].concat(),
-            [9; 64],
+            [9; SIGNATURE_LEN],
         )
         .expect("valid operation");
 
         let bytes = operation.encode();
-        assert_eq!(bytes.len(), 242);
+        assert_eq!(bytes.len(), 3487);
         assert!(Operation::decode(&bytes).expect("decode") == operation);
     }
 
@@ -471,7 +458,7 @@ mod tests {
             Vec::new(),
             id(6),
             [vec![7; 24], vec![8; 16]].concat(),
-            [0; 64],
+            [0; SIGNATURE_LEN],
         )
         .expect("valid operation")
         .sign(&key);

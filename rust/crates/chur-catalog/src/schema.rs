@@ -331,23 +331,23 @@ CREATE TABLE object_key_requests (
     collection_id BLOB NOT NULL CHECK (length(collection_id) = 16),
     prekey_id BLOB NOT NULL UNIQUE CHECK (length(prekey_id) = 16),
     private_key BLOB NOT NULL CHECK (length(private_key) = 32),
-    record BLOB NOT NULL CHECK (length(record) = 226),
+    record BLOB NOT NULL CHECK (length(record) = 4655),
     PRIMARY KEY (collection_id, object_id)
 ) STRICT;
 CREATE INDEX object_key_requests_by_collection ON object_key_requests(collection_id);
 CREATE TABLE pending_object_keys (
     object_id BLOB NOT NULL CHECK (length(object_id) = 16),
     collection_id BLOB NOT NULL CHECK (length(collection_id) = 16),
-    request_record BLOB NOT NULL CHECK (length(request_record) = 226),
-    grant_record BLOB NOT NULL CHECK (length(grant_record) = 346),
+    request_record BLOB NOT NULL CHECK (length(request_record) = 4655),
+    grant_record BLOB NOT NULL CHECK (length(grant_record) = 4679),
     envelope BLOB NOT NULL CHECK (length(envelope) = 142),
     PRIMARY KEY (collection_id, object_id)
 ) STRICT;
 CREATE TABLE issued_object_key_grants (
     prekey_id BLOB PRIMARY KEY CHECK (length(prekey_id) = 16),
     object_id BLOB NOT NULL CHECK (length(object_id) = 16),
-    request_record BLOB NOT NULL CHECK (length(request_record) = 226),
-    grant_record BLOB NOT NULL CHECK (length(grant_record) = 346)
+    request_record BLOB NOT NULL CHECK (length(request_record) = 4655),
+    grant_record BLOB NOT NULL CHECK (length(grant_record) = 4679)
 ) STRICT;
 
 -- Local pairing state stays in the encrypted catalog and is excluded from portable snapshots.
@@ -427,8 +427,8 @@ CREATE TABLE sync_membership_records (
 
 CREATE TABLE sync_devices (
     device_id              BLOB PRIMARY KEY CHECK (length(device_id) = 16),
-    signing_public_key     BLOB NOT NULL CHECK (length(signing_public_key) = 32),
-    hpke_public_key        BLOB NOT NULL CHECK (length(hpke_public_key) = 32),
+    signing_public_key     BLOB NOT NULL CHECK (length(signing_public_key) = 1952),
+    hpke_public_key        BLOB NOT NULL CHECK (length(hpke_public_key) = 1216),
     status                 INTEGER NOT NULL CHECK (status IN (1, 2)),
     membership_generation  INTEGER NOT NULL CHECK (membership_generation >= 0),
     revoked_sequence       INTEGER CHECK (revoked_sequence IS NULL OR revoked_sequence >= 0),
@@ -440,7 +440,7 @@ CREATE TABLE sync_devices (
 CREATE TABLE sync_signing_keys (
     device_id              BLOB NOT NULL REFERENCES sync_devices(device_id),
     membership_generation  INTEGER NOT NULL CHECK (membership_generation >= 0),
-    public_key             BLOB NOT NULL CHECK (length(public_key) = 32),
+    public_key             BLOB NOT NULL CHECK (length(public_key) = 1952),
     PRIMARY KEY (device_id, membership_generation)
 ) STRICT;
 
@@ -529,10 +529,10 @@ CREATE TABLE sharing_membership_records (
     collection_id              BLOB NOT NULL REFERENCES sharing_collections(collection_id),
     membership_generation      INTEGER NOT NULL CHECK (membership_generation >= 1),
     commitment                 BLOB NOT NULL CHECK (length(commitment) = 32),
-    issuer_signing_public_key  BLOB NOT NULL CHECK (length(issuer_signing_public_key) = 32),
+    issuer_signing_public_key  BLOB NOT NULL CHECK (length(issuer_signing_public_key) = 1952),
     recipient_identity_vault_id BLOB NOT NULL CHECK (length(recipient_identity_vault_id) = 16),
     recipient_device_id        BLOB NOT NULL CHECK (length(recipient_device_id) = 16),
-    record                     BLOB NOT NULL CHECK (length(record) = 292),
+    record                     BLOB NOT NULL CHECK (length(record) = 6641),
     PRIMARY KEY (collection_id, membership_generation),
     UNIQUE (collection_id, commitment)
 ) STRICT;
@@ -541,8 +541,8 @@ CREATE TABLE sharing_recipient_pins (
     collection_id               BLOB NOT NULL REFERENCES sharing_collections(collection_id),
     recipient_identity_vault_id BLOB NOT NULL CHECK (length(recipient_identity_vault_id) = 16),
     recipient_device_id         BLOB NOT NULL CHECK (length(recipient_device_id) = 16),
-    signing_public_key          BLOB NOT NULL CHECK (length(signing_public_key) = 32),
-    hpke_public_key             BLOB NOT NULL CHECK (length(hpke_public_key) = 32),
+    signing_public_key          BLOB NOT NULL CHECK (length(signing_public_key) = 1952),
+    hpke_public_key             BLOB NOT NULL CHECK (length(hpke_public_key) = 1216),
     verification                INTEGER NOT NULL CHECK (verification IN (1, 2)),
     PRIMARY KEY (collection_id, recipient_identity_vault_id, recipient_device_id)
 ) STRICT;
@@ -554,7 +554,7 @@ CREATE TABLE sharing_grants (
     recipient_device_id         BLOB NOT NULL CHECK (length(recipient_device_id) = 16),
     membership_generation       INTEGER NOT NULL CHECK (membership_generation >= 1),
     collection_epoch            INTEGER NOT NULL CHECK (collection_epoch >= 1),
-    record                      BLOB NOT NULL CHECK (length(record) = 309)
+    record                      BLOB NOT NULL CHECK (length(record) = 4642)
 ) STRICT;
 
 CREATE INDEX sharing_membership_by_recipient
@@ -2286,7 +2286,13 @@ mod tests {
             db.connection()
                 .execute(
                     "INSERT INTO sharing_recipient_pins VALUES (?1, ?2, ?3, ?4, ?5, 3)",
-                    rusqlite::params![collection, [3u8; 16], [4u8; 16], [5u8; 32], [6u8; 32],],
+                    rusqlite::params![
+                        collection,
+                        [3u8; 16],
+                        [4u8; 16],
+                        vec![5u8; 1952],
+                        vec![6u8; 1216],
+                    ],
                 )
                 .is_err(),
             "an invalid verification state was accepted"
@@ -2295,7 +2301,7 @@ mod tests {
             db.connection()
                 .execute(
                     "INSERT INTO sharing_grants VALUES (?1, ?2, ?3, ?4, 1, 1, ?5)",
-                    rusqlite::params![[7u8; 16], collection, [3u8; 16], [4u8; 16], [8u8; 308],],
+                    rusqlite::params![[7u8; 16], collection, [3u8; 16], [4u8; 16], vec![8u8; 4641],],
                 )
                 .is_err(),
             "a short grant record was accepted"
@@ -2377,7 +2383,7 @@ mod tests {
             db.connection()
                 .execute(
                     "INSERT INTO sync_devices VALUES (?1, ?2, ?3, 1, 1, NULL, NULL)",
-                    rusqlite::params![vec![1u8; 15], vec![2u8; 32], vec![3u8; 32]],
+                    rusqlite::params![vec![1u8; 15], vec![2u8; 1952], vec![3u8; 1216]],
                 )
                 .is_err(),
             "a short device id was accepted"
@@ -2386,7 +2392,7 @@ mod tests {
         db.connection()
             .execute(
                 "INSERT INTO sync_devices VALUES (?1, ?2, ?3, 1, 1, NULL, NULL)",
-                rusqlite::params![device, [2u8; 32], [3u8; 32]],
+                rusqlite::params![device, vec![2u8; 1952], vec![3u8; 1216]],
             )
             .expect("device");
         assert!(

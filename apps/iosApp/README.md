@@ -26,6 +26,8 @@ xcodebuild -project apps/iosApp/Chur.xcodeproj -scheme Chur \
   CODE_SIGNING_ALLOWED=NO build
 ```
 
+Run the Swift host tests with `apps/iosApp/test-host.sh`. The script builds the Rust inbox ABI for the host before it links the tests.
+
 The first build phase selects the matching Gradle framework and Rust static
 library for the Xcode platform and configuration. The application links one
 Rust archive. Its deployment target is iOS 18.0, matching
@@ -119,10 +121,10 @@ builds do not register capabilities or change an Apple Developer account.
 Open Chur once after installation to prepare the inbox. An unavailable group
 or locked Keychain fails closed; the extension explains how to retry.
 
-The app creates a separate RSA-2048 ingress private key in its own Keychain,
+The app stores a separate 32-byte X-Wing receiving seed in its own Keychain,
 with `WhenUnlockedThisDeviceOnly` accessibility. The extension receives only
 its public key. No vault key, password, session, or catalog is shared. Each
-item has a fresh AES-256-GCM key, wrapped with RSA-OAEP-SHA256. Encrypted,
+item has a fresh AES-256-GCM key, sealed with X-Wing HPKE, HKDF-SHA256, and ChaCha20-Poly1305. The internal `CHURIN02` header carries an 1120-byte encapsulation and a 48-byte sealed item key. Encrypted,
 bounded metadata contains the original name, MIME type, and byte length.
 One MiB authenticated chunks bind the envelope header and chunk position.
 Random batch names and numbered ciphertext filenames reveal no source names.

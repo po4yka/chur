@@ -29,9 +29,10 @@ use crate::constants::{
     CATALOG_FORMAT_VERSION_V10, CATALOG_FORMAT_VERSION_V11, CATALOG_FORMAT_VERSION_V12,
     CATALOG_FORMAT_VERSION_V13, CATALOG_FORMAT_VERSION_V14, CATALOG_FORMAT_VERSION_V15,
     CATALOG_FORMAT_VERSION_V16, CATALOG_FORMAT_VERSION_V17, CATALOG_FORMAT_VERSION_V18,
-    CATALOG_FORMAT_VERSION_V19, CONTAINER_VERSION_V1, CONTAINER_VERSION_V2, CRYPTO_POLICY_V1,
-    DESCRIPTOR_VERSION_V1, ENCODING_PROFILE_V1, FLAGS_V1, MAGIC_VAULT, NAMING_PROFILE_V1,
-    OBJECT_STORE_FORMAT_VERSION_V1, SLOT_VERSION_V1, SUITE_V1, SlotType, VaultState,
+    CATALOG_FORMAT_VERSION_V19, CONTAINER_VERSION_V1, CONTAINER_VERSION_V2,
+    CRYPTO_POLICY_INTERNAL_PQ, DESCRIPTOR_VERSION_V1, ENCODING_PROFILE_V1, FLAGS_V1, MAGIC_VAULT,
+    NAMING_PROFILE_V1, OBJECT_STORE_FORMAT_VERSION_V1, SLOT_VERSION_V1, SUITE_V1, SlotType,
+    VaultState,
 };
 use crate::slot::{SlotBinding, WRAP_SUITE_ANDROID_KEYSTORE, WRAP_SUITE_RUST};
 
@@ -482,7 +483,7 @@ impl VaultDescriptor {
         out.fixed(&MAGIC_VAULT)
             .u16(DESCRIPTOR_VERSION_V1)
             .u16(ENCODING_PROFILE_V1)
-            .u16(CRYPTO_POLICY_V1)
+            .u16(CRYPTO_POLICY_INTERNAL_PQ)
             .u16(FLAGS_V1)
             .u32(bounds::HEAD_LEN as u32)
             .u32(descriptor_length)
@@ -531,7 +532,7 @@ impl VaultDescriptor {
             "descriptor encoding profile is not supported"
         );
         ensure!(
-            reader.u16()? == CRYPTO_POLICY_V1,
+            reader.u16()? == CRYPTO_POLICY_INTERNAL_PQ,
             UnsupportedVersion,
             "descriptor crypto policy is not supported"
         );
@@ -811,11 +812,17 @@ mod tests {
         assert_eq!(&encoded[0x00..0x08], b"CHURVLT1");
         assert_eq!(&encoded[0x08..0x0a], &[0, 1]);
         assert_eq!(&encoded[0x0a..0x0c], &[0, 1]);
-        assert_eq!(&encoded[0x0c..0x0e], &[0, 1]);
+        assert_eq!(&encoded[0x0c..0x0e], &[0xff, 1]);
         assert_eq!(&encoded[0x0e..0x10], &[0, 0]);
         assert_eq!(&encoded[0x10..0x14], &40u32.to_be_bytes());
         assert_eq!(&encoded[0x14..0x18], &220u32.to_be_bytes());
         assert_eq!(&encoded[0x18..0x28], &[0x01; 16]);
+        let mut classical = encoded;
+        classical[0x0c] = 0;
+        assert_eq!(
+            VaultDescriptor::parse(&classical).unwrap_err().status(),
+            ChurStatus::UnsupportedVersion
+        );
     }
 
     #[test]

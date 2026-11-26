@@ -18,6 +18,7 @@ pub mod aead;
 pub mod commit;
 pub mod kdf;
 pub mod password;
+pub mod post_quantum;
 pub mod random;
 pub mod recovery;
 pub mod secret;

@@ -7,9 +7,9 @@ use chur_crypto::{Commitment, Key, Nonce, aead, commit};
 use chur_format::codec::{Reader, Writer};
 use zeroize::Zeroizing;
 
-use crate::operation::{DeviceSigningKey, PROTOCOL_VERSION_V1, verify_ed25519};
+use crate::operation::{DeviceSigningKey, PROTOCOL_VERSION_V2, verify_device_signature};
 
-const SIGNATURE_LEN: usize = 64;
+use chur_crypto::post_quantum::{SIGNATURE_LEN, VERIFY_LEN};
 const FIXED_FIELDS_LEN: usize = 2 + (ID_LEN * 4) + 8 + COMMITMENT_LEN + 4 + 4 + SIGNATURE_LEN;
 
 /// One participant head observed by a collection operation's author.
@@ -183,8 +183,8 @@ impl CollectionOperation {
     }
 
     /// Verifies the operation against one enrolled device key.
-    pub fn verify_signature(&self, verifying_key: &[u8; 32]) -> Result<()> {
-        verify_ed25519(verifying_key, &self.issuer_signature, &self.signing_bytes())
+    pub fn verify_signature(&self, verifying_key: &[u8; VERIFY_LEN]) -> Result<()> {
+        verify_device_signature(verifying_key, &self.issuer_signature, &self.signing_bytes())
     }
 
     /// Opens and authenticates the private payload.
@@ -257,7 +257,7 @@ impl CollectionOperation {
 
     fn write_outer_fields(&self, writer: &mut Writer) {
         writer
-            .u16(PROTOCOL_VERSION_V1)
+            .u16(PROTOCOL_VERSION_V2)
             .id(&self.operation_id)
             .id(&self.issuer_identity_vault_id)
             .id(&self.issuer_device_id)
@@ -290,7 +290,7 @@ impl CollectionOperation {
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let mut reader = Reader::new(bytes, ChurStatus::NonCanonicalEncoding);
         ensure!(
-            reader.u16()? == PROTOCOL_VERSION_V1,
+            reader.u16()? == PROTOCOL_VERSION_V2,
             UnsupportedVersion,
             "collection operation protocol version is not supported"
         );
@@ -435,7 +435,7 @@ mod tests {
         )
         .expect("valid operation");
         let bytes = operation.encode();
-        assert_eq!(bytes.len(), 258);
+        assert_eq!(bytes.len(), 3503);
         assert!(CollectionOperation::decode(&bytes).expect("decode") == operation);
     }
 

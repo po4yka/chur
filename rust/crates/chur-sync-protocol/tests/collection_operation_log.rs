@@ -3,7 +3,10 @@
 #![allow(clippy::expect_used, clippy::panic)]
 
 use chur_core::{ChurStatus, Id};
-use chur_crypto::{Key, Nonce};
+use chur_crypto::{
+    Key, Nonce,
+    post_quantum::{RECIPIENT_LEN, recipient_public},
+};
 use chur_sync_protocol::collection_membership::{
     CollectionMembershipAction, CollectionMembershipRecord, CollectionMembershipState,
 };
@@ -20,11 +23,20 @@ fn id(byte: u8) -> Id {
     Id::new([byte; 16]).expect("non-zero identifier")
 }
 
+fn recipient_public_key(seed: u8) -> [u8; RECIPIENT_LEN] {
+    recipient_public(&Key::new([seed; 32])).expect("recipient key")
+}
+
 fn identity(vault: Id, device: Id, seed: u8) -> (DeviceSigningKey, MembershipState) {
     let key = DeviceSigningKey::from_seed([seed; 32]);
-    let enrollment = EnrollmentRecord::initial(vault, device, key.verifying_key(), [seed + 1; 32])
-        .expect("enrollment")
-        .sign(&key);
+    let enrollment = EnrollmentRecord::initial(
+        vault,
+        device,
+        key.verifying_key(),
+        recipient_public_key(seed + 1),
+    )
+    .expect("enrollment")
+    .sign(&key);
     let membership = MembershipState::bootstrap(&enrollment).expect("membership");
     (key, membership)
 }
@@ -59,7 +71,7 @@ fn fixture(permission: PermissionProfile) -> Fixture {
         recipient_vault,
         recipient_device,
         recipient_key.verifying_key(),
-        [21; 32],
+        recipient_public_key(21),
         1,
         source_vault,
         source_device,
@@ -346,7 +358,7 @@ fn downgraded_contributor_history_replays_but_cannot_grow() {
         id(3),
         id(4),
         fixture.recipient_key.verifying_key(),
-        [21; 32],
+        recipient_public_key(21),
         1,
         id(1),
         id(2),

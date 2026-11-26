@@ -325,16 +325,23 @@ mod tests {
 
     fn membership() -> MembershipState {
         let owner_key = DeviceSigningKey::from_seed([3; 32]);
-        let initial = EnrollmentRecord::initial(id(1), id(2), owner_key.verifying_key(), [4; 32])
-            .expect("initial")
-            .sign(&owner_key);
+        let initial = EnrollmentRecord::initial(
+            id(1),
+            id(2),
+            owner_key.verifying_key(),
+            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([4; 32]))
+                .expect("test recipient key"),
+        )
+        .expect("initial")
+        .sign(&owner_key);
         let mut state = MembershipState::bootstrap(&initial).expect("membership");
         let peer_key = DeviceSigningKey::from_seed([5; 32]);
         let peer = EnrollmentRecord::new(
             id(1),
             id(3),
             peer_key.verifying_key(),
-            [6; 32],
+            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([6; 32]))
+                .expect("test recipient key"),
             2,
             id(2),
             2,

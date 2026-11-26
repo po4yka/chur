@@ -94,6 +94,38 @@ class PublicShellPresentationTest {
     }
 
     @Test
+    fun pet_follows_the_toy_while_the_pointer_moves_each_frame() {
+        present(scale = 1f, content = { dev.po4yka.chur.app.publicshell.PetScreen({}, { false }) }) { f ->
+            assertTrue(f.await { f.has("Chur companion") })
+            val start = f.bounds("Chur companion")
+            f.click("Toy")
+            val finished = CountDownLatch(1)
+            f.main {
+                val origin = IntArray(2).also(f.view::getLocationInWindow)
+                val started = SystemClock.uptimeMillis()
+                val y = start.center.y - origin[1] - start.height / 2
+                val framesToDrag = 40
+                f.view.postOnAnimation(object : Runnable {
+                    var frame = 0
+                    override fun run() {
+                        val x = start.center.x - origin[0] + frame % 2 * 4
+                        val action = when (frame) {
+                            0 -> android.view.MotionEvent.ACTION_DOWN
+                            framesToDrag -> android.view.MotionEvent.ACTION_UP
+                            else -> android.view.MotionEvent.ACTION_MOVE
+                        }
+                        val event = android.view.MotionEvent.obtain(started, SystemClock.uptimeMillis(), action, x, y, 0)
+                        try { f.view.dispatchTouchEvent(event) } finally { event.recycle() }
+                        if (frame++ < framesToDrag) f.view.postOnAnimation(this) else finished.countDown()
+                    }
+                })
+            }
+            assertTrue(finished.await(10, TimeUnit.SECONDS))
+            assertTrue("Chur must move during the drag", f.bounds("Chur companion").center.y < start.center.y - start.height / 4)
+        }
+    }
+
+    @Test
     fun pet_sleep_treat_and_toy_remain_accessible_without_progression() {
         present(scale = 1f, nativeSurface = true, content = { dev.po4yka.chur.app.publicshell.PetScreen({}, { false }) }) { f ->
             assertTrue(f.await { f.has("Chur companion") })

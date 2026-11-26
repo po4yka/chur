@@ -32,6 +32,7 @@ import dev.po4yka.chur.app.onboarding.*
 import dev.po4yka.chur.app.theme.LocalChurMotion
 import dev.po4yka.chur.app.theme.SettingsGlyph
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -74,19 +75,23 @@ fun PetScreen(onOpenSettings: () -> Unit, onSubmitCode: (String) -> Boolean,
         pet = pet.settleTreat()
         event(GuideStep.PET_TREAT)
     }
-    LaunchedEffect(activity, toy, reduced) {
+    LaunchedEffect(activity, reduced, sizePx) {
         if (activity == PetActivity.TOY) {
-            var last = 0L
+            var last = withFrameNanos { it }
             while (true) {
                 val now = withFrameNanos { it }
-                pet = pet.follow(toy.x - sizePx / 2, toy.y - sizePx / 2, if (last == 0L) 0f else (now - last) / 1e9f)
+                val destination = toy
+                val target = Offset((destination.x - sizePx / 2).coerceIn(0f, pet.interaction.maxX),
+                    (destination.y - sizePx / 2).coerceIn(0f, pet.interaction.maxY))
+                pet = pet.follow(target.x, target.y, (now - last) / 1e9f)
                 last = now
-                val target = Offset((toy.x - sizePx / 2).coerceIn(0f, pet.interaction.maxX),
-                    (toy.y - sizePx / 2).coerceIn(0f, pet.interaction.maxY))
                 val delta = Offset(pet.interaction.x, pet.interaction.y) - target
-                if (delta.getDistance() < 1f || reduced) break
+                if (delta.getDistance() < 1f || reduced) {
+                    event(GuideStep.PET_TOY)
+                    snapshotFlow { toy }.first { it != destination }
+                    last = withFrameNanos { it }
+                }
             }
-            event(GuideStep.PET_TOY)
         }
     }
     if (enteringCode) AccessCodeDialog(onSubmitCode) { enteringCode = false }

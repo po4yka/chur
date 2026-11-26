@@ -126,6 +126,25 @@ class PublicShellPresentationTest {
     }
 
     @Test
+    fun pet_follows_the_toy_into_space_added_by_a_resize() {
+        present(height = 380, scale = 1f, content = { dev.po4yka.chur.app.publicshell.PetScreen({}, { false }) }) { f ->
+            f.click("Toy")
+            f.gesture("Chur companion", 0f, 0f, 100)
+            val oldBottom = f.bounds("Put toy away").top
+            f.main {
+                f.view.layoutParams = f.view.layoutParams.apply {
+                    height = (640 * f.view.resources.displayMetrics.density).toInt()
+                }
+            }
+            val petHeight = f.bounds("Chur companion").height
+            assertTrue(f.await { f.bounds("Put toy away").top > oldBottom + petHeight })
+            val targetY = f.bounds("Put toy away").top - petHeight / 2
+            f.gesture("Chur companion", 0f, targetY - f.bounds("Chur companion").center.y, 200)
+            assertTrue(f.await { f.bounds("Chur companion").center.y > oldBottom })
+        }
+    }
+
+    @Test
     fun pet_sleep_treat_and_toy_remain_accessible_without_progression() {
         present(scale = 1f, nativeSurface = true, content = { dev.po4yka.chur.app.publicshell.PetScreen({}, { false }) }) { f ->
             assertTrue(f.await { f.has("Chur companion") })

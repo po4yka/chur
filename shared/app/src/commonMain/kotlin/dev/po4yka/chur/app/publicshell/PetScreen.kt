@@ -108,8 +108,10 @@ fun PetScreen(onOpenSettings: () -> Unit, onSubmitCode: (String) -> Boolean,
                     toy = Offset(it.width / 2f, it.height / 2f); placed = true
                 }
             }.pointerInput(activity, sizePx) {
-                val scene = this@pointerInput.size
-                fun inside(p: Offset) = Offset(p.x.coerceIn(0f, scene.width.toFloat()), p.y.coerceIn(0f, scene.height.toFloat()))
+                fun inside(p: Offset): Offset {
+                    val scene = this@pointerInput.size
+                    return Offset(p.x.coerceIn(0f, scene.width.toFloat()), p.y.coerceIn(0f, scene.height.toFloat()))
+                }
                 if (activity == PetActivity.TOY) awaitEachGesture {
                     val down = awaitFirstDown(); toy = inside(down.position); down.consume()
                     while (true) {

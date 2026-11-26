@@ -1,6 +1,9 @@
 package dev.po4yka.chur.app.notes
 
 import android.content.ContentResolver
+import android.content.Context
+import android.content.Intent
+import androidx.activity.compose.LocalActivity
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -16,7 +19,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import java.io.File
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -77,6 +82,56 @@ actual fun NoteImportAction(
     }) { Text("Import .md") }
 }
 
+/** MainActivity owns the document result even when recreation closes the note editor. */
+interface PublicNoteExportHost {
+    val publicNoteExport: AndroidPublicNoteExport
+}
+
+class AndroidPublicNoteExport(private val context: Context, restored: Boolean, private val launch: (Intent) -> Unit) {
+    // The single-task host has one pending destination. Only public text enters this cache.
+    private val directory = File(context.cacheDir, "public-note-export")
+    private val snapshot = File(directory, "pending")
+
+    init {
+        directory.listFiles()?.filter { it.name.startsWith("staging-") }?.forEach { it.delete() }
+        if (!restored) discard()
+    }
+
+    suspend fun choose(title: String, body: String, markdown: Boolean) {
+        check(directory.isDirectory || directory.mkdirs())
+        val temporary = File.createTempFile("staging-", ".tmp", directory)
+        try {
+            withContext(Dispatchers.IO) {
+                val bytes = publicNoteExportBytes(title, body, markdown)
+                try { temporary.writeBytes(bytes) } finally { bytes.fill(0) }
+            }
+            check(!snapshot.exists() && temporary.renameTo(snapshot)) { "A note export is pending." }
+            try {
+                val contract = ActivityResultContracts.CreateDocument(if (markdown) "text/markdown" else "text/plain")
+                launch(contract.createIntent(context, noteExportFilename(title, markdown)))
+            } catch (failure: Exception) {
+                discard()
+                throw failure
+            }
+        } finally { temporary.delete() }
+    }
+
+    fun discard() { snapshot.delete() }
+
+    suspend fun complete(uri: Uri?) {
+        if (uri == null) { discard(); return }
+        // Open and unlink before suspending so that a later request can reuse the slot.
+        val source = try { snapshot.inputStream() } finally { discard() }
+        withContext(NonCancellable + Dispatchers.IO) {
+            source.use { input ->
+                val output = context.contentResolver.openOutputStream(uri, "wt")
+                    ?: error("cannot open export destination")
+                output.use { input.copyTo(it) }
+            }
+        }
+    }
+}
+
 @Composable
 actual fun PublicNoteExportAction(
     title: String,
@@ -85,38 +140,19 @@ actual fun PublicNoteExportAction(
     enabled: Boolean,
     onFailure: () -> Unit,
 ) {
-    val resolver = LocalContext.current.contentResolver
+    val host = LocalActivity.current as? PublicNoteExportHost
     val scope = rememberCoroutineScope()
-    val currentEnabled by rememberUpdatedState(enabled)
     val failure by rememberUpdatedState(onFailure)
-    var pendingBytes by remember { mutableStateOf<ByteArray?>(null) }
-    var active by remember { mutableStateOf(true) }
-    DisposableEffect(Unit) { onDispose { active = false; pendingBytes?.fill(0); pendingBytes = null } }
-    val launcher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument(if (markdown) "text/markdown" else "text/plain"),
-    ) { uri ->
-        val bytes = pendingBytes
-        pendingBytes = null
-        if (bytes != null) {
-            if (uri == null || !active || !currentEnabled) bytes.fill(0)
-            else scope.launch {
-                try {
-                    withContext(Dispatchers.IO) {
-                        resolver.openOutputStream(uri, "wt")?.use { it.write(bytes) }
-                            ?: error("cannot open export destination")
-                    }
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    if (active && currentEnabled) failure()
-                } finally { bytes.fill(0) }
-            }
+    var preparing by remember { mutableStateOf(false) }
+    TextButton(enabled = enabled && !preparing, onClick = {
+        preparing = true
+        scope.launch {
+            try {
+                requireNotNull(host).publicNoteExport.choose(title, body, markdown)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { failure() }
+            finally { preparing = false }
         }
-    }
-    TextButton(enabled = enabled && pendingBytes == null, onClick = {
-        pendingBytes = publicNoteExportBytes(title, body, markdown)
-        try { launcher.launch(noteExportFilename(title, markdown)) }
-        catch (_: Exception) { pendingBytes?.fill(0); pendingBytes = null; failure() }
     }) { Text(if (markdown) "Export .md" else "Export .txt") }
 }
 

@@ -1,11 +1,13 @@
 package dev.po4yka.chur.android
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -13,6 +15,8 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import dev.po4yka.chur.app.notes.AndroidPublicNoteExport
+import dev.po4yka.chur.app.notes.PublicNoteExportHost
 import dev.po4yka.chur.app.ChurApp
 import dev.po4yka.chur.app.LauncherAction
 import dev.po4yka.chur.app.GateResult
@@ -21,6 +25,8 @@ import dev.po4yka.chur.app.gate
 import dev.po4yka.chur.app.needsPrivacyCover
 import dev.po4yka.chur.ffi.ChurVault
 import java.io.IOException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.combine
 
@@ -45,12 +51,24 @@ import kotlinx.coroutines.flow.combine
  * cannot be authorized without it. `FragmentActivity` extends
  * `ComponentActivity`, so everything else here is unchanged.
  */
-class MainActivity : FragmentActivity() {
+class MainActivity : FragmentActivity(), PublicNoteExportHost {
+    override lateinit var publicNoteExport: AndroidPublicNoteExport
+        private set
     private lateinit var host: ChurHost
     private var gateCompatible = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val noteDestination = activityResultRegistry.register("public-note-text-export", this,
+            ActivityResultContracts.StartActivityForResult()) { result ->
+            val uri = if (result.resultCode == Activity.RESULT_OK) result.data?.data else null
+            lifecycleScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                try { publicNoteExport.complete(uri) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { showNoteExportFailure() }
+            }
+        }
+        publicNoteExport = AndroidPublicNoteExport(applicationContext, savedInstanceState != null, noteDestination::launch)
         enableEdgeToEdge()
 
         host = ChurHost.of(this)
@@ -140,6 +158,13 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
+    }
+
+    private fun showNoteExportFailure() {
+        val message = dev.po4yka.chur.app.publicshell.utilityText(
+            "The file could not be exported. Try again.", "Не удалось экспортировать файл. Повторите попытку."
+        )
+        android.widget.Toast.makeText(applicationContext, message, android.widget.Toast.LENGTH_LONG).show()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -240,6 +265,7 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onDestroy() {
+        if (isFinishing) publicNoteExport.discard()
         super.onDestroy()
         // The window goes; the runtime, the repository and the engine stay,
         // because §14 gives them the life of the process and §8.1 has the next

@@ -76,7 +76,10 @@ fun CalculatorScreen(onOpenSettings: () -> Unit, modifier: Modifier = Modifier, 
         if (key == CalculatorKey.EQUALS) { submit(); return }
         if (scientific) {
             expression = when (key) {
-                CalculatorKey.CLEAR -> ""
+                CalculatorKey.CLEAR -> {
+                    scientificResult = "0"
+                    ""
+                }
                 CalculatorKey.BACKSPACE -> expression.dropLast(1)
                 CalculatorKey.SIGN -> ScientificCalculator.toggleOperandSign(expression)
                 else -> (expression + if (key == CalculatorKey.DECIMAL) decimal else key.symbol).take(512)

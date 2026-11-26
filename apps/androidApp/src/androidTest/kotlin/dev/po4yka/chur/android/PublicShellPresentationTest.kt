@@ -222,6 +222,24 @@ class PublicShellPresentationTest {
     }
 
     @Test
+    fun scientific_clear_resets_the_expression_display_and_copied_result() {
+        present(scale = 1f, content = { CalculatorScreen(onOpenSettings = {}) }) { f ->
+            for (key in listOf("Scientific", "2", "Add", "3", "Equals")) f.click(key)
+            assertTrue(f.has("Calculator result: 5"))
+            f.click("Clear all")
+            assertTrue(f.has("Calculator result: 0"))
+            f.click("Copy")
+            f.main {
+                val clipboard = f.activity.getSystemService(android.content.ClipboardManager::class.java)
+                assertEquals("0", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+            }
+            f.click("7")
+            f.click("Equals")
+            assertTrue(f.has("Calculator result: 7"))
+        }
+    }
+
+    @Test
     fun calculator_keeps_history_after_a_failed_initial_read() {
         val files = mutableMapOf<String, String>()
         val prior = dev.po4yka.chur.app.publicshell.Calculation("2 + 3", "5")

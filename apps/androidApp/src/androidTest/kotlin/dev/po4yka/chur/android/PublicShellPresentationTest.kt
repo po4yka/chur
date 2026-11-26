@@ -178,6 +178,25 @@ class PublicShellPresentationTest {
     }
 
     @Test
+    fun accessible_move_changes_the_pet_position_in_a_one_pet_wide_scene() {
+        present(width = 144, scale = 1f, content = { dev.po4yka.chur.app.publicshell.PetScreen({}, { false }) }) { f ->
+            assertTrue(f.await { f.has("Chur companion") })
+            val before = f.bounds("Chur companion")
+            assertTrue(f.customAction("Chur companion", "Move Chur"))
+            assertTrue(f.await { f.bounds("Chur companion").top != before.top })
+            val firstEdge = f.bounds("Chur companion")
+            assertEquals(before.left, firstEdge.left, 0f)
+            assertTrue(f.customAction("Chur companion", "Move Chur"))
+            assertTrue(f.await { f.bounds("Chur companion").top != firstEdge.top })
+            val travel = kotlin.math.abs(f.bounds("Chur companion").top - firstEdge.top).toInt()
+            val controlsTop = f.bounds("Treat").top
+            f.main { f.view.layoutParams = f.view.layoutParams.apply { height -= travel } }
+            assertTrue(f.await { f.bounds("Treat").top < controlsTop })
+            assertFalse(f.customAction("Chur companion", "Move Chur"))
+        }
+    }
+
+    @Test
     fun pet_large_text_keeps_settings_and_actions_available() {
         present(nativeSurface = true, content = { dev.po4yka.chur.app.publicshell.PetScreen({}, { false }) }) { f ->
             f.click("Treat")
@@ -561,6 +580,11 @@ class PublicShellPresentationTest {
                 assertTrue(node.config[SemanticsActions.OnClick].action?.invoke() == true)
             }
             frames()
+        }
+        fun customAction(label: String, action: String): Boolean {
+            var result = false
+            main { result = requireNotNull(find(label)).config[SemanticsActions.CustomActions].single { it.label == action }.action() }
+            return result
         }
         fun hold(label: String) {
             reveal(label)

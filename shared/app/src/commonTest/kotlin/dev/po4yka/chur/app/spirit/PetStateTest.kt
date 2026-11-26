@@ -41,6 +41,15 @@ class PetStateTest {
         val narrow = SpiritInteraction().bounds(144f, 700f, 144f).copy(y = 100f)
         assertEquals(Pair(72f, 628f), PetState(narrow).toyOffer(144f))
     }
+    @Test fun moving_uses_the_available_axis_and_needs_space() {
+        val narrow = PetState(SpiritInteraction().bounds(144f, 400f, 144f))
+        val moved = narrow.moveToFarEdge()
+        assertEquals(0f, moved.interaction.x)
+        assertEquals(256f, moved.interaction.y)
+        assertEquals(0f, moved.moveToFarEdge().interaction.y)
+        val snug = PetState(SpiritInteraction().bounds(144f, 144f, 144f))
+        assertEquals(snug, snug.moveToFarEdge())
+    }
     @Test fun ending_a_drag_or_activity_never_persists_a_session() {
         val dragged = PetState(SpiritInteraction().bounds(500f, 700f, 144f).down(0f, 0f).move(100f, 100f, 8f))
         val sleeping = dragged.act(PetAction.SLEEP)

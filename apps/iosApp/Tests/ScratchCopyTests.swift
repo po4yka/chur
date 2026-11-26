@@ -69,6 +69,19 @@ final class ScratchCopyTests: XCTestCase {
         }
     }
 
+    func testShrinkingSourceRemovesTheIncompleteCopy() throws {
+        try Data(repeating: 1, count: 131_072).write(to: source)
+        let writer = try FileHandle(forWritingTo: source)
+        defer { try? writer.close() }
+        XCTAssertThrowsError(try ScratchCopy.copy(from: source, to: target, progress: { processed, _ in
+            if processed > 0 { try! writer.truncate(atOffset: UInt64(processed)) }
+            return true
+        }, shouldContinue: { true })) {
+            XCTAssertEqual($0 as? ScratchCopyError, .sourceIncomplete)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
+    }
+
     func testGrowingSourceCannotExceedTheBudget() throws {
         try Data([1]).write(to: source)
         var checks = 0

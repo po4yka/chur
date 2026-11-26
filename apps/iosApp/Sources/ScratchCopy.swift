@@ -5,6 +5,7 @@ enum ScratchCopyError: Error, Equatable {
     case limitExceeded
     case cancelled
     case timedOut
+    case sourceIncomplete
 }
 
 /// Copies a provider file with a fixed byte budget and removes incomplete output.
@@ -71,6 +72,7 @@ enum ScratchCopy {
             written += Int64(chunk.count)
         }
         guard shouldContinue() else { throw ScratchCopyError.cancelled }
+        if let sourceSize, written < Int64(sourceSize) { throw ScratchCopyError.sourceIncomplete }
         try writer.close()
         complete = true
     }

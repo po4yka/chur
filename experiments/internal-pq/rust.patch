@@ -2921,10 +2921,19 @@ index 77b3bda4..ec9fd0eb 100644
      }
      Ok(writer.finish())
 diff --git a/rust/crates/chur-ffi/src/sharing.rs b/rust/crates/chur-ffi/src/sharing.rs
-index 922373d6..96e9afc8 100644
+index 922373d6..31a30cb7 100644
 --- a/rust/crates/chur-ffi/src/sharing.rs
 +++ b/rust/crates/chur-ffi/src/sharing.rs
-@@ -82,7 +82,7 @@ pub unsafe extern "C" fn chur_sharing_identity(
+@@ -19,6 +19,8 @@ use crate::registry::{self, Entry, Handle, Kind};
+ const RECORD_VERSION_V1: u16 = 1;
+ const BUNDLE_BYTES_MAX: u32 = 16_777_216;
+ const BUNDLE_RECORDS_MAX: usize = 4_096;
++// Leave room for the membership and every remaining recipient's grant on the last page.
++const REVOCATION_ROTATIONS_MAX: usize = chur_core::limits::sync::RESPONSE_OPERATIONS_MAX;
+ const ISSUERS_MAX: usize = 257;
+ 
+ struct DecodedIssuer {
+@@ -82,7 +84,7 @@ pub unsafe extern "C" fn chur_sharing_identity(
              );
              let mut writer = Writer::new();
              writer
@@ -2933,7 +2942,16 @@ index 922373d6..96e9afc8 100644
                  .id(enrollment.vault_id())
                  .id(enrollment.device_id())
                  .fixed(enrollment.signing_public_key())
-@@ -911,16 +911,12 @@ fn decode_issuer(reader: &mut Reader<'_>) -> Result<DecodedIssuer, Error> {
+@@ -473,7 +475,7 @@ pub unsafe extern "C" fn chur_sharing_revoke(
+                 recipient_vault_id,
+                 recipient_device_id,
+                 accepted_at_ms,
+-                BUNDLE_RECORDS_MAX,
++                REVOCATION_ROTATIONS_MAX,
+             )?;
+             ensure!(
+                 prepared.rotation_operations().len() <= BUNDLE_RECORDS_MAX
+@@ -911,16 +913,12 @@ fn decode_issuer(reader: &mut Reader<'_>) -> Result<DecodedIssuer, Error> {
      for _ in 0..membership_count {
          let bytes = reader.variable(EnrollmentRecord::LEN as u32)?;
          let record = match bytes.len() {
@@ -2956,7 +2974,7 @@ index 922373d6..96e9afc8 100644
              _ => {
                  return Err(Error::new(
                      ChurStatus::NonCanonicalEncoding,
-@@ -993,7 +989,7 @@ pub unsafe extern "C" fn chur_object_key_request(
+@@ -993,7 +991,7 @@ pub unsafe extern "C" fn chur_object_key_request(
              destination,
              capacity,
              bytes_written,
@@ -2965,7 +2983,7 @@ index 922373d6..96e9afc8 100644
              |db, root, vault_id, input| {
                  let mut reader = Reader::new(input, ChurStatus::NonCanonicalEncoding);
                  let collection = reader.id()?;
-@@ -1038,7 +1034,7 @@ pub unsafe extern "C" fn chur_object_key_issue(
+@@ -1038,7 +1036,7 @@ pub unsafe extern "C" fn chur_object_key_issue(
              destination,
              capacity,
              bytes_written,
@@ -2974,7 +2992,7 @@ index 922373d6..96e9afc8 100644
              |db, root, vault_id, input| {
                  let prekey = chur_sync_protocol::object_grant::ObjectPrekey::decode(input)?;
                  Ok(chur_catalog::object_grants::issue(db, root, vault_id, &prekey)?.encode())
-@@ -1080,7 +1076,8 @@ pub unsafe extern "C" fn chur_object_key_accept(
+@@ -1080,7 +1078,8 @@ pub unsafe extern "C" fn chur_object_key_accept(
                      decode_accept_bundle(package)?.0
                  };
                  let grant = chur_sync_protocol::object_grant::ObjectKeyGrant::decode(
@@ -2984,6 +3002,70 @@ index 922373d6..96e9afc8 100644
                  )?;
                  reader.finish()?;
                  let evidence = issuers
+@@ -1225,3 +1224,63 @@ pub unsafe extern "C" fn chur_sharing_outbound(
+         unsafe { write_out(bytes_written, encoded.len()) }
+     })
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use chur_core::limits::sync;
++    use chur_sync_protocol::{
++        operation::ObservedHead,
++        payload::{OperationPayload, PayloadBody},
++    };
++
++    #[test]
++    fn largest_revocation_page_fits_the_destination_before_catalog_writes() -> chur_core::Result<()>
++    {
++        // The fixed-size membership is the largest body in this response. Rotation
++        // operations carry only a collection key envelope or an object ID and commitment.
++        let record = CollectionMembershipRecord::decode(include_bytes!(
++            "../../../../test-vectors/v1/collection-memberships/collection-membership-v1-upsert.record.bin"
++        ))?;
++        let collection = *record.collection_id();
++        let payload = OperationPayload::new(
++            collection,
++            record.collection_epoch(),
++            PayloadBody::ChangeCollectionMembership(record),
++        )?;
++        let heads = (1..=u8::MAX)
++            .take(sync::OBSERVED_HEADS_MAX)
++            .map(|n| Id::new([n; 16]).map(|id| ObservedHead::new(id, 1)))
++            .collect::<chur_core::Result<Vec<_>>>()?;
++        let issuer = Id::new([0xff; 16])?;
++        let operation = Operation::seal(
++            collection,
++            collection,
++            issuer,
++            1,
++            [0; 32],
++            heads,
++            collection,
++            &Key::zeroed(),
++            chur_crypto::Nonce::new([1; 24]),
++            &payload.encode(),
++        )?
++        .encode();
++        let framed_operation = 4 + operation.len();
++        let membership = 4 + CollectionMembershipRecord::LEN + framed_operation;
++        let grant = 4 + CollectionGrant::LEN + framed_operation;
++        // Version, two counts, completion flag, and the length-prefixed records.
++        let page = 2
++            + 4
++            + 4
++            + 1
++            + membership
++            + REVOCATION_ROTATIONS_MAX * framed_operation
++            + sync::COLLECTION_RECIPIENT_DEVICES_MAX * grant;
++        assert!(
++            page <= BUNDLE_BYTES_MAX as usize,
++            "revocation page needs {page} bytes"
++        );
++        Ok(())
++    }
++}
 diff --git a/rust/crates/chur-ffi/tests/handshake.c b/rust/crates/chur-ffi/tests/handshake.c
 index 047ccaac..b1f49df8 100644
 --- a/rust/crates/chur-ffi/tests/handshake.c

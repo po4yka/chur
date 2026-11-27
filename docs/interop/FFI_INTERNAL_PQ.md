@@ -18,6 +18,10 @@ The isolated internal app checks major ABI 8 and minor version 4 or later before
 
 The native verifier checks the prekey and its recipient, enforces its lifetime and applies the existing deletion policy. After a successful acceptance, local custody follows the object envelope and tombstone rules.
 
+## Collection revocation
+
+`chur_sharing_revoke` returns at most 256 rotation operations per call. This limit leaves space in the 16 MiB response for the signed membership record and grants for every remaining recipient. When `rotation_complete` is zero, deliver that page and call again for the same recipient. The final page carries the grants.
+
 ## Synchronization and peer calls
 
 The locked receiver checks each version and canonical encoding before staging any part of a page. `chur_sync_stage` supports up to 256 signed operations in one page, with a 16 MiB limit on the complete staging input. The unlocked processor verifies the signatures and checks dependencies. Classical records cannot enter the internal inbox.

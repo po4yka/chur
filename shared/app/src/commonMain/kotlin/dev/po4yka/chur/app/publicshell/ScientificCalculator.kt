@@ -4,6 +4,37 @@ import kotlin.math.*
 
 /** A bounded expression parser. No scripting engine, identifiers or executable input. */
 object ScientificCalculator {
+    private val trailingAtom = Regex("""(?:[0-9.,]+(?:e[+−-]?[0-9]*)?|[a-zA-Zπ]+)$""")
+
+    internal fun toggleOperandSign(expression: String): String {
+        var end = expression.trimEnd().length
+        if (expression.getOrNull(end - 1) == '%') end = expression.take(end - 1).trimEnd().length
+        val start = if (expression.getOrNull(end - 1) == ')') {
+            var depth = 1
+            var open = end - 1
+            while (open > 0 && depth > 0) {
+                when (expression[--open]) {
+                    ')' -> depth++
+                    '(' -> depth--
+                }
+            }
+            if (depth != 0) return expression
+            val prefix = expression.take(open).trimEnd()
+            if (prefix.lastOrNull()?.isLetter() == true) prefix.indexOfLast { !it.isLetter() } + 1 else open
+        } else {
+            val decimal = publicDecimalSeparator().singleOrNull() ?: '.'
+            trailingAtom.find(expression.take(end).replace(decimal, '.'))?.range?.first ?: end
+        }
+        val prefix = expression.take(start).trimEnd()
+        if (prefix.endsWith('-') || prefix.endsWith('−')) {
+            val beforeMinus = prefix.dropLast(1).trimEnd().lastOrNull()
+            if (beforeMinus == null || beforeMinus in "(+-−*/×÷^") {
+                return expression.removeRange(prefix.lastIndex, prefix.length)
+            }
+        }
+        return if (expression.length < 512) expression.replaceRange(start, start, "-") else expression
+    }
+
     fun evaluate(expression: String, degrees: Boolean): String {
         require(expression.isNotBlank() && expression.length <= 512) { "Enter an expression" }
         val parser = Parser(expression.replace(publicDecimalSeparator(), ".").replace(',', '.').replace('×', '*').replace('÷', '/').replace('−', '-'), degrees)
@@ -32,7 +63,11 @@ object ScientificCalculator {
             require(++depth <= 64) { "Expression is too deeply nested" }
             try { return when { take('+') -> unary(); take('-') -> -unary(); else -> power() } } finally { depth-- }
         }
-        fun power(): Double { val value = atom(); return if (take('^')) checked(value.pow(unary())) else value }
+        fun power(): Double {
+            val operand = atom()
+            val base = if (take('%')) operand / 100 else operand
+            return if (take('^')) checked(base.pow(unary())) else base
+        }
         fun atom(): Double {
             if (take('(')) { val value = sum(); require(take(')')) { "Close the parenthesis" }; return value }
             space()
@@ -62,7 +97,7 @@ object ScientificCalculator {
                 while (index < source.length && source[index].isDigit()) index++
             }
             val number = source.substring(start, index).toDoubleOrNull() ?: throw IllegalArgumentException("Enter a number")
-            return checked(if (take('%')) number / 100 else number)
+            return checked(number)
         }
     }
 }

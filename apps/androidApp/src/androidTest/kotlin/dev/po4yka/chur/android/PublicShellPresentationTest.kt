@@ -94,6 +94,57 @@ class PublicShellPresentationTest {
     }
 
     @Test
+    fun pet_follows_the_toy_while_the_pointer_moves_each_frame() {
+        present(scale = 1f, content = { dev.po4yka.chur.app.publicshell.PetScreen({}, { false }) }) { f ->
+            assertTrue(f.await { f.has("Chur companion") })
+            val start = f.bounds("Chur companion")
+            f.click("Toy")
+            val finished = CountDownLatch(1)
+            f.main {
+                val origin = IntArray(2).also(f.view::getLocationInWindow)
+                val started = SystemClock.uptimeMillis()
+                val y = start.center.y - origin[1] - start.height / 2
+                val framesToDrag = 40
+                f.view.postOnAnimation(object : Runnable {
+                    var frame = 0
+                    override fun run() {
+                        val x = start.center.x - origin[0] + frame % 2 * 4
+                        val action = when (frame) {
+                            0 -> android.view.MotionEvent.ACTION_DOWN
+                            framesToDrag -> android.view.MotionEvent.ACTION_UP
+                            else -> android.view.MotionEvent.ACTION_MOVE
+                        }
+                        val event = android.view.MotionEvent.obtain(started, SystemClock.uptimeMillis(), action, x, y, 0)
+                        try { f.view.dispatchTouchEvent(event) } finally { event.recycle() }
+                        if (frame++ < framesToDrag) f.view.postOnAnimation(this) else finished.countDown()
+                    }
+                })
+            }
+            assertTrue(finished.await(10, TimeUnit.SECONDS))
+            assertTrue("Chur must move during the drag", f.bounds("Chur companion").center.y < start.center.y - start.height / 4)
+        }
+    }
+
+    @Test
+    fun pet_follows_the_toy_into_space_added_by_a_resize() {
+        present(height = 380, scale = 1f, content = { dev.po4yka.chur.app.publicshell.PetScreen({}, { false }) }) { f ->
+            f.click("Toy")
+            f.gesture("Chur companion", 0f, 0f, 100)
+            val oldBottom = f.bounds("Put toy away").top
+            f.main {
+                f.view.layoutParams = f.view.layoutParams.apply {
+                    height = (640 * f.view.resources.displayMetrics.density).toInt()
+                }
+            }
+            val petHeight = f.bounds("Chur companion").height
+            assertTrue(f.await { f.bounds("Put toy away").top > oldBottom + petHeight })
+            val targetY = f.bounds("Put toy away").top - petHeight / 2
+            f.gesture("Chur companion", 0f, targetY - f.bounds("Chur companion").center.y, 200)
+            assertTrue(f.await { f.bounds("Chur companion").center.y > oldBottom })
+        }
+    }
+
+    @Test
     fun pet_sleep_treat_and_toy_remain_accessible_without_progression() {
         present(scale = 1f, nativeSurface = true, content = { dev.po4yka.chur.app.publicshell.PetScreen({}, { false }) }) { f ->
             assertTrue(f.await { f.has("Chur companion") })
@@ -127,12 +178,50 @@ class PublicShellPresentationTest {
     }
 
     @Test
+    fun accessible_move_changes_the_pet_position_in_a_one_pet_wide_scene() {
+        present(width = 144, scale = 1f, content = { dev.po4yka.chur.app.publicshell.PetScreen({}, { false }) }) { f ->
+            assertTrue(f.await { f.has("Chur companion") })
+            val before = f.bounds("Chur companion")
+            assertTrue(f.customAction("Chur companion", "Move Chur"))
+            assertTrue(f.await { f.bounds("Chur companion").top != before.top })
+            val firstEdge = f.bounds("Chur companion")
+            assertEquals(before.left, firstEdge.left, 0f)
+            assertTrue(f.customAction("Chur companion", "Move Chur"))
+            assertTrue(f.await { f.bounds("Chur companion").top != firstEdge.top })
+            val travel = kotlin.math.abs(f.bounds("Chur companion").top - firstEdge.top).toInt()
+            val controlsTop = f.bounds("Treat").top
+            f.main { f.view.layoutParams = f.view.layoutParams.apply { height -= travel } }
+            assertTrue(f.await { f.bounds("Treat").top < controlsTop })
+            assertFalse(f.customAction("Chur companion", "Move Chur"))
+        }
+    }
+
+    @Test
     fun pet_large_text_keeps_settings_and_actions_available() {
         present(nativeSurface = true, content = { dev.po4yka.chur.app.publicshell.PetScreen({}, { false }) }) { f ->
             f.click("Treat")
             f.assertLabelFits("Treat")
             f.click("Settings")
             f.capture("pet-large-text.png")
+        }
+    }
+
+    @Test
+    fun selecting_all_notes_only_applies_the_bulk_action_to_search_results() {
+        val orchid = dev.po4yka.chur.notes.Note("a", "Orchid", "", 1)
+        val pine = dev.po4yka.chur.notes.Note("b", "Pine", "", 2)
+        var affected = emptyList<String>()
+        present(scale = 1f, content = {
+            NotesScreen(notes = listOf(orchid, pine), query = "Orchid", onQueryChange = {},
+                onBulkAction = { notes, _ -> affected = notes.map { it.id } },
+                onOpen = {}, onCreate = {}, onOpenSettings = {})
+        }) { f ->
+            assertTrue(f.await { f.has("Orchid") })
+            assertFalse(f.has("Pine"))
+            f.hold("Orchid")
+            f.click("Select all")
+            f.click("Pin")
+            assertEquals(listOf("a"), affected)
         }
     }
 
@@ -167,6 +256,54 @@ class PublicShellPresentationTest {
             assertTrue(f.await { f.has("Use") })
             f.click("Use")
             assertTrue(f.await { f.has("Calculator result: 5") })
+        }
+    }
+
+    @Test
+    fun scientific_clear_resets_the_expression_display_and_copied_result() {
+        present(scale = 1f, content = { CalculatorScreen(onOpenSettings = {}) }) { f ->
+            for (key in listOf("Scientific", "2", "Add", "3", "Equals")) f.click(key)
+            assertTrue(f.has("Calculator result: 5"))
+            f.click("Clear all")
+            assertTrue(f.has("Calculator result: 0"))
+            f.click("Copy")
+            f.main {
+                val clipboard = f.activity.getSystemService(android.content.ClipboardManager::class.java)
+                assertEquals("0", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+            }
+            f.click("7")
+            f.click("Equals")
+            assertTrue(f.has("Calculator result: 7"))
+        }
+    }
+
+    @Test
+    fun calculator_keeps_history_after_a_failed_initial_read() {
+        val files = mutableMapOf<String, String>()
+        val prior = dev.po4yka.chur.app.publicshell.Calculation("2 + 3", "5")
+        val next = dev.po4yka.chur.app.publicshell.Calculation("1 + 1", "2")
+        val persisted = dev.po4yka.chur.app.publicshell.PublicUtilityStore(files::get, files::put)
+        persisted.saveHistory(listOf(prior))
+        var failFirstRead = true
+        val store = dev.po4yka.chur.app.publicshell.PublicUtilityStore(read = { key ->
+            if (key == "calculator" && failFirstRead) {
+                failFirstRead = false
+                throw java.io.IOException("History is temporarily unavailable")
+            }
+            files[key]
+        }, write = files::put)
+        present(content = {
+            CompositionLocalProvider(dev.po4yka.chur.app.publicshell.LocalPublicUtilities provides store) {
+                CalculatorScreen(onOpenSettings = {})
+            }
+        }) { f ->
+            assertTrue(f.await { f.has("History is unavailable. Its saved data has not been changed.") })
+            f.click("1")
+            f.click("Add")
+            f.click("1")
+            f.click("Equals")
+            assertTrue(f.await { f.has("Calculator result: 2") })
+            assertEquals(listOf(next, prior), persisted.history())
         }
     }
 
@@ -443,6 +580,11 @@ class PublicShellPresentationTest {
                 assertTrue(node.config[SemanticsActions.OnClick].action?.invoke() == true)
             }
             frames()
+        }
+        fun customAction(label: String, action: String): Boolean {
+            var result = false
+            main { result = requireNotNull(find(label)).config[SemanticsActions.CustomActions].single { it.label == action }.action() }
+            return result
         }
         fun hold(label: String) {
             reveal(label)

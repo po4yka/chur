@@ -48,9 +48,10 @@ fun CalculatorScreen(onOpenSettings: () -> Unit, modifier: Modifier = Modifier, 
     val decimal = publicDecimalSeparator()
     fun record(row: Calculation) {
         if (showFirstWriteDisclosure && !acceptedDisclosure) { pendingHistory = row; return }
-        val next = (listOf(row) + history).take(500)
-        try { store.saveHistory(next); history = next; message = null }
-        catch (_: Exception) { message = utilityText("History could not be saved. Your result is still available.", "Не удалось сохранить историю. Результат остаётся на экране.") }
+        try {
+            history = store.appendCalculation(row)
+            message = null
+        } catch (_: Exception) { message = utilityText("History could not be saved. Your result is still available.", "Не удалось сохранить историю. Результат остаётся на экране.") }
     }
     fun submit() {
         val candidate = if (scientific) expression else directEntry.takeIf {
@@ -75,9 +76,12 @@ fun CalculatorScreen(onOpenSettings: () -> Unit, modifier: Modifier = Modifier, 
         if (key == CalculatorKey.EQUALS) { submit(); return }
         if (scientific) {
             expression = when (key) {
-                CalculatorKey.CLEAR -> ""
+                CalculatorKey.CLEAR -> {
+                    scientificResult = "0"
+                    ""
+                }
                 CalculatorKey.BACKSPACE -> expression.dropLast(1)
-                CalculatorKey.SIGN -> if (expression.startsWith('-')) expression.drop(1) else "-$expression"
+                CalculatorKey.SIGN -> ScientificCalculator.toggleOperandSign(expression)
                 else -> (expression + if (key == CalculatorKey.DECIMAL) decimal else key.symbol).take(512)
             }
         } else {
@@ -107,7 +111,7 @@ fun CalculatorScreen(onOpenSettings: () -> Unit, modifier: Modifier = Modifier, 
                 ListItem(headlineContent = { Text(row.result) }, supportingContent = { Text(row.expression) }, trailingContent = {
                     Row {
                         TextButton(onClick = {
-                            if (scientific) expression = row.result else basic = CalculatorState.fromNumber(row.result) ?: CalculatorState()
+                            if (scientific) expression = row.result else basic = basic.replaceOperand(row.result) ?: basic
                             directEntry = ""; showingHistory = false
                         }) { Text(utilityText("Use", "Вставить")) }
                         TextButton(onClick = {
@@ -156,7 +160,7 @@ fun CalculatorScreen(onOpenSettings: () -> Unit, modifier: Modifier = Modifier, 
                     TextButton(onClick = { clipboard.setText(AnnotatedString(result)) }) { Text(utilityText("Copy", "Копировать")) }
                     TextButton(onClick = {
                         val text = clipboard.getText()?.text.orEmpty().trim()
-                        val parsed = CalculatorState.fromNumber(text)
+                        val parsed = basic.replaceOperand(text)
                         if (parsed == null) message = utilityText("Paste a finite number.", "Вставьте конечное число.")
                         else { if (scientific) expression = if (PublicUtilityStore.validCode(text)) text else parsed.display else basic = parsed; directEntry = text.takeIf(PublicUtilityStore::validCode).orEmpty() }
                     }) { Text(utilityText("Paste", "Вставить")) }

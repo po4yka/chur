@@ -22,6 +22,9 @@ data class CalculatorState private constructor(
     val pendingExpression: String
         get() = if (stored != null && operation != null) "$stored ${operation.symbol}" else ""
 
+    fun replaceOperand(text: String): CalculatorState? =
+        fromNumber(text)?.copy(stored = stored, operation = operation)
+
     val calculationExpression: String? get() {
         val selected = operation ?: repeatOperation ?: return null
         val right = if (operation != null) { if (waiting) stored!! else display } else repeatOperand!!

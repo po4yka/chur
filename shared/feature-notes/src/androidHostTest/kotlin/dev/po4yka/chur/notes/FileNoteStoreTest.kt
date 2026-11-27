@@ -65,6 +65,47 @@ class FileNoteStoreTest {
         assertTrue(!File(path).exists())
     }
 
+    @Test
+    fun a_note_that_fits_in_the_store_is_saved_and_an_oversized_write_preserves_it() = runTest {
+        val body = "x".repeat(256 * 1024)
+        val file = File(path)
+        file.bufferedWriter().use { writer ->
+            writer.write("""{"notes":[""")
+            repeat(126) { i ->
+                if (i > 0) writer.write(",")
+                writer.write("""{"id":"$i","title":"Original archived note $i","body":"$body","updatedMs":1}""")
+            }
+            writer.write("]}")
+        }
+        val store = FileNoteStore(path)
+        store.put(Note("fits", "", body, 2))
+        assertTrue(file.length() <= 32L * 1024 * 1024)
+        assertFailsWith<IllegalArgumentException> { store.put(Note("too-big", "", body, 3)) }
+        val reopened = FileNoteStore(path).all()
+        assertEquals(127, reopened.size)
+        assertEquals(body, reopened.single { it.id == "fits" }.body)
+    }
+
+    @Test
+    fun a_failed_file_lookup_retries_before_the_next_write() = runTest {
+        val parent = File(directory, "public")
+        val parked = File(directory, "parked")
+        val notesPath = File(parent, "notes.json").path
+        val original = Note("a", "Saved", "original", 1)
+        val next = Note("b", "New", "second", 2)
+        assertTrue(parent.mkdir())
+        FileNoteStore(notesPath).put(original)
+        assertTrue(parent.renameTo(parked))
+        assertTrue(parent.createNewFile())
+
+        val store = FileNoteStore(notesPath)
+        assertFailsWith<IOException> { store.all() }
+        assertTrue(parent.delete())
+        assertTrue(parked.renameTo(parent))
+        store.put(next)
+        assertEquals(setOf(original, next), FileNoteStore(notesPath).all().toSet())
+    }
+
     /**
      * An unreadable file must not be replaced by the next write. Reporting the
      * failure keeps whatever is in the file; answering "empty" would delete it

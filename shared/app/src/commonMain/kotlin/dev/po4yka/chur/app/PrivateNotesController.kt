@@ -127,7 +127,8 @@ private class VaultPrivateNotesAccess(private val vault: VaultRepository) : Priv
         vault.savePrivateNote(generation, id = saved?.noteId, expectedRevision = saved?.revision ?: 0,
             title = title, body = body, pinned = pinned, format = format, proceed = proceed)
     override suspend fun change(generation: Long, id: ByteArray, revision: Long, action: PrivateNoteAction) =
-        vault.changePrivateNote(generation, id, revision, action)
+        if (action == PrivateNoteAction.TRASH) vault.trashPrivateNoteFromEditor(generation, id, revision)
+        else vault.changePrivateNote(generation, id, revision, action)
     override suspend fun attachments(generation: Long, id: ByteArray) = vault.privateNoteAttachments(generation, id)
     override suspend fun readAttachment(generation: Long, id: ByteArray, attachmentId: ByteArray) = vault.readPrivateNoteAttachment(generation, id, attachmentId)
     override suspend fun putAttachment(generation: Long, saved: PrivateNote, attachment: PrivateNoteAttachmentData) =
@@ -585,6 +586,7 @@ class PrivateNotesController internal constructor(
         val saved = state.value.editor?.saved ?: return
         update { it.copy(confirmation = null) }
         runAction {
+            if (action == PrivateNoteAction.TRASH) draftWrite?.join()
             withContext(dispatcher) { access.change(generation, saved.noteId, saved.revision, action) }
             leaveEditor()
         }

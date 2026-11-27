@@ -1878,15 +1878,17 @@ private fun IosRestoreRoute(controller: ChurController) {
     var running by remember { mutableStateOf(false) }
     var cancelled by remember { mutableStateOf(false) }
     var pending by remember { mutableStateOf<ArchiveCredential?>(null) }
+    var request by remember { mutableStateOf<IosArchivePickRequest?>(null) }
     var pickerOpen by remember { mutableStateOf(false) }
     DisposableEffect(controller) {
         onDispose {
             pending?.clear(); pending = null
+            request?.cancelled()
             if (pickerOpen) { pickerOpen = false; controller.endHostActivity() }
         }
     }
     RestoreBackupScreen(
-        busy = running, error = formError, cancelled = cancelled, operation = operation,
+        busy = running, preparing = request?.preparing == true, error = formError, cancelled = cancelled, operation = operation,
         onChoose = { password ->
             cancelled = false
             controller.report(null)
@@ -1900,7 +1902,8 @@ private fun IosRestoreRoute(controller: ChurController) {
                 controller.beginHostActivity()
                 pickerOpen = true
                 try {
-                    present(IosArchivePickRequest { source, error ->
+                    val pick = IosArchivePickRequest { source, error ->
+                        request = null
                         val credential = pending
                         pending = null
                         if (pickerOpen) { pickerOpen = false; controller.endHostActivity() }
@@ -1918,17 +1921,27 @@ private fun IosRestoreRoute(controller: ChurController) {
                                 cancelled = wasCancelled
                             }
                         }
-                    })
+                    }
+                    request = pick
+                    present(pick)
                 } catch (_: Exception) {
                     pending?.clear(); pending = null
-                    pickerOpen = false; controller.endHostActivity()
+                    request?.cancelled()
+                    if (pickerOpen) { pickerOpen = false; controller.endHostActivity() }
                     running = false
                     controller.report("The file picker could not be opened.")
                 }
             }
         },
         onBack = { if (!running) controller.goTo(if (controller.vaultState.value is VaultState.NoVault) AppRoute.CreateVault else AppRoute.PublicShell) },
-        onCancel = controller::cancelActiveOperation,
+        onCancel = {
+            val pick = request
+            if (pick?.preparing == true) {
+                pick.cancelled()
+                cancelled = true
+                controller.report("Cancelled.")
+            } else controller.cancelActiveOperation()
+        },
     )
 }
 

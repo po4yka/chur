@@ -276,15 +276,15 @@ class FileNoteStore internal constructor(
 
     /** Publish the new in-memory state only after its atomic write succeeds. */
     private suspend fun save(state: NoteState) {
-        // Preflight an upper bound before asking the serializer to allocate one full document.
-        // Count UTF-8 plus JSON escaping without materializing a second encoded document.
+        // Reject oversized text before allocating the full document. The serializer below
+        // accounts for the exact metadata and punctuation in files near the limit.
         val versions = state.notes.values.toList() + state.history.values.flatten().map { it.note }
-        val upperBound = versions.sumOf { note ->
-            2048L + jsonStringBytes(note.title) + jsonStringBytes(note.body) + jsonStringBytes(note.id) +
+        val contentBytes = versions.sumOf { note ->
+            jsonStringBytes(note.title) + jsonStringBytes(note.body) + jsonStringBytes(note.id) +
                 jsonStringBytes(note.folder.orEmpty()) + note.tags.sumOf(::jsonStringBytes) +
-                note.attachments.sumOf { 512L + jsonStringBytes(it.name) + jsonStringBytes(it.mimeType) }
+                note.attachments.sumOf { jsonStringBytes(it.name) + jsonStringBytes(it.mimeType) }
         }
-        require(upperBound <= NoteState.MAX_STORE_BYTES) { "note store is too large" }
+        require(contentBytes <= NoteState.MAX_STORE_BYTES) { "note store is too large" }
         val text = json.encodeToString(
             NoteFile.serializer(),
             NoteFile(version = 4, notes = state.notes.values.toList(), disclosureAcknowledged = state.acknowledged, history = state.history),

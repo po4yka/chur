@@ -16,6 +16,7 @@ data class NoteAttachment(
 )
 
 object NoteAttachments {
+    const val MAX_NAME_BYTES: Int = 240
     const val MAX_FILE_BYTES: Int = 8 * 1024 * 1024
     const val MAX_TOTAL_BYTES: Int = 16 * 1024 * 1024
     const val MAX_ATTACHMENTS: Int = 32
@@ -28,7 +29,7 @@ object NoteAttachments {
         require(name.none { it == '/' || it == '\\' || it == ':' || it.isISOControl() }) {
             "invalid attachment name"
         }
-        require(name.encodeToByteArray(throwOnInvalidSequence = true).size <= 240) { "attachment name is too long" }
+        require(name.encodeToByteArray(throwOnInvalidSequence = true).size <= MAX_NAME_BYTES) { "attachment name is too long" }
     }
 
     /** MIME comes from content, never from an extension or an untrusted provider. */

@@ -204,6 +204,38 @@ class PrivateOnboardingTest {
             assertTrue(await { !has("Finish tutorial") })
         } finally { main { activity.finish() } }
     }
+    @Test fun cancel_while_opening_a_backup_releases_staging_and_allows_retry() {
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        val uri = IncomingShareFixtureProvider.uri.buildUpon().appendPath("slow-archive").build()
+        val filter = android.content.IntentFilter(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            addDataType("*/*")
+        }
+        val monitor = instrumentation.addMonitor(filter, android.app.Instrumentation.ActivityResult(
+            android.app.Activity.RESULT_OK, Intent().setData(uri)), true)
+        fun staged() = context.cacheDir.listFiles().orEmpty().filter { it.name.startsWith("archive-input-") }.toSet()
+        val before = staged()
+        try {
+            assertTrue("Use a fresh disposable installation", await { has("Meet Chur") })
+            click("Chur")
+            click("Set up vault", guide = true)
+            click("Restore from a backup")
+            field("Backup password or recovery phrase", password)
+            click("Choose backup file")
+            assertTrue("Provider bytes reached staging", await { staged() != before })
+            click("Cancel")
+            assertTrue(await { has("Cancelled.") && staged() == before })
+            assertRestoreCredentialCleared()
+            field("Backup password or recovery phrase", password)
+            main { assertTrue(SemanticsProperties.Disabled !in find("Choose backup file")!!.config) }
+        } finally {
+            instrumentation.removeMonitor(monitor)
+            main { activity.finish() }
+        }
+    }
+
     private fun assertRestoreCredentialCleared() {
         main {
             val field = nodes().first { "Backup password or recovery phrase" in it.labels && SemanticsActions.SetText in it.config }

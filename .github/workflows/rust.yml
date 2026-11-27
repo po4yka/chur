@@ -521,6 +521,13 @@ jobs:
       # --write-locks enforces the same lockfile pin as the Android job, for
       # the Kotlin/Native configurations that only a macOS job resolves.
       - run: ./gradlew --no-daemon --no-parallel --max-workers=1 iosSimulatorArm64Test compileKotlinIosArm64 linkDebugFrameworkIosSimulatorArm64 --write-locks
+      - name: remove the owned Vision test simulator
+        if: always()
+        run: |
+          if [[ -n "${CHUR_IOS_TEST_DEVICE:-}" ]]; then
+            xcrun simctl shutdown "$CHUR_IOS_TEST_DEVICE" || true
+            xcrun simctl delete "$CHUR_IOS_TEST_DEVICE"
+          fi
       - name: the Gradle lockfiles pin the resolution
         run: git diff --exit-code -- '**/gradle.lockfile'
       # The checksum-pinned Filament iOS SDK is large; restore it instead of
@@ -572,14 +579,9 @@ jobs:
           path: |
             shared/**/build/test-results/iosSimulatorArm64Test/*.xml
             shared/app/build/reports/video-acceptance/ios/*.json
+            apps/iosApp/.build/release-compatibility/Logs/Test/*.xcresult/
+          include-hidden-files: true
           if-no-files-found: warn
-      - name: remove the owned Vision test simulator
-        if: always()
-        run: |
-          if [[ -n "${CHUR_IOS_TEST_DEVICE:-}" ]]; then
-            xcrun simctl shutdown "$CHUR_IOS_TEST_DEVICE" || true
-            xcrun simctl delete "$CHUR_IOS_TEST_DEVICE"
-          fi
 
   internal-pq:
     name: internal PQ (${{ matrix.target }})

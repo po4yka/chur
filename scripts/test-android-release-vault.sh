@@ -12,7 +12,16 @@ keytool -genkeypair -alias chur-release -keyalg RSA -keysize 2048 -validity 2 \
     -storepass:env CHUR_RELEASE_PASSWORD -keystore "$CHUR_RELEASE_KEYSTORE"
 
 ./gradlew -PchurReleaseVaultTest=true -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect \
-    :apps:androidApp:classicalVaultApi35ReleaseAndroidTest "$@"
+    :apps:androidApp:classicalVaultApi35ReleaseAndroidTest "$@" || {
+    status=$?
+    results=apps/androidApp/build/release-vault-test/outputs/androidTest-results/managedDevice/release/classicalVaultApi35
+    if [[ -d "$results" ]]; then
+        # Gradle reports only a runner-local URL. UTP can fail before JUnit writes a test case.
+        find "$results" -name 'TEST-*.xml' -exec head -c 16384 {} \; >&2
+        find "$results" -name 'test-result.pb' -exec sh -c 'LC_ALL=C strings "$1" | head -c 16384' _ {} \; >&2
+    fi
+    exit "$status"
+}
 
 python3 - <<'PY'
 from pathlib import Path

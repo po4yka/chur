@@ -381,9 +381,19 @@ jobs:
           if-no-files-found: error
 
       - name: open a classical vault with the ordinary Android release
+        id: release_vault
         run: |
           scripts/test-android-release-vault.sh --write-locks
           git diff --exit-code -- '**/gradle.lockfile'
+      - name: save the release vault test failure
+        if: failure() && steps.release_vault.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-vault-${{ github.sha }}
+          path: |
+            apps/androidApp/build/release-vault-test/outputs/androidTest-results/managedDevice/release/
+            apps/androidApp/build/release-vault-test/reports/androidTests/managedDevice/release/
+          if-no-files-found: warn
 
       - name: prepare Android release signing
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

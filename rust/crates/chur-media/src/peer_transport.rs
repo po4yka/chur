@@ -1,10 +1,10 @@
 //! Ephemeral, authenticated, direct device connections. No relay or durable service.
 //!
-//! Version 3 binds an ephemeral X-Wing exchange to the invitation secret and a signed
+//! Version 2 adds an X25519 exchange to the invitation secret and a signed
 //! transcript: each device proves its enrolled device key before any frame of
 //! the caller is sent or received.
 use chur_core::{ChurStatus, Error, Id, Result, ensure};
-use chur_crypto::peer::{self, INITIATOR, LISTENER, OFFER_LEN, Offer, REPLY_LEN};
+use chur_crypto::peer::{EphemeralKey, HELLO_LEN};
 use chur_crypto::{Key, Nonce, aead, random};
 use chur_sync_protocol::peer_auth::{PeerCredential, RECORD_LEN};
 use std::io::{Read, Write};
@@ -14,6 +14,12 @@ use zeroize::Zeroizing;
 
 /// Maximum plaintext in one bounded peer frame.
 pub const FRAME_MAX: usize = 4 * 1024 * 1024;
+const MAGIC: &[u8; 8] = b"CHURP2P2";
+/// The version-1 hello magic, refused with `UNSUPPORTED_VERSION`.
+const LEGACY_MAGIC: &[u8; 8] = b"CHURP2P1";
+/// The initiator role signs 1 and the listener role signs 0.
+const INITIATOR: u8 = 1;
+const LISTENER: u8 = 0;
 /// Unproven connections that one invitation examines at the same time.
 const CANDIDATES_MAX: usize = 4;
 /// Failed connections after which an invitation closes.
@@ -27,6 +33,7 @@ pub struct Peer {
     candidates: Vec<Channel>,
     channel: Option<Channel>,
     secret: Key,
+    initiator: bool,
     deadline: Instant,
     failures: u32,
     credential: PeerCredential,
@@ -45,8 +52,8 @@ impl Peer {
         let listener = TcpListener::bind((address, 0)).map_err(network)?;
         listener.set_nonblocking(true).map_err(network)?;
         let port = listener.local_addr().map_err(network)?.port();
-        let secret = random::secret()?;
-        let mut peer = Self::new(secret.duplicate(), credential);
+        let secret = Key::new(random::array()?);
+        let mut peer = Self::new(secret.duplicate(), false, credential);
         peer.listener = Some(listener);
         Ok((peer, port, secret))
     }
@@ -65,20 +72,17 @@ impl Peer {
         let stream =
             TcpStream::connect_timeout(&SocketAddr::new(address, port), Duration::from_secs(3))
                 .map_err(network)?;
-        let mut peer = Self::new(secret, credential);
-        peer.channel = Some(Channel::create(
-            stream,
-            Some(Offer::generate()?),
-            CANDIDATE_TIMEOUT,
-        )?);
+        let mut peer = Self::new(secret, true, credential);
+        peer.channel = Some(Channel::create(stream, FRAME_MAX, IDLE_TIMEOUT)?);
         Ok(peer)
     }
-    fn new(secret: Key, credential: PeerCredential) -> Self {
+    fn new(secret: Key, initiator: bool, credential: PeerCredential) -> Self {
         Self {
             listener: None,
             candidates: Vec::new(),
             channel: None,
             secret,
+            initiator,
             deadline: Instant::now() + IDLE_TIMEOUT,
             failures: 0,
             credential,
@@ -99,18 +103,15 @@ impl Peer {
         let Some(channel) = self.channel.as_mut() else {
             return Ok(false);
         };
-        channel.pump(self.remote.is_some())?;
-        if channel.handshake(&self.secret)? {
+        channel.pump(true)?;
+        if channel.handshake(&self.secret, self.initiator)? {
             // The initiator proves itself first; the listener answers only a verified peer.
             channel.authenticate(&self.credential, INITIATOR)?;
-            self.secret = Key::zeroed();
         }
         if self.remote.is_none()
             && let Some(record) = channel.open()?
         {
             self.remote = Some(channel.verify(&self.credential, LISTENER, &record)?);
-            channel.frame_max = FRAME_MAX;
-            channel.deadline = Instant::now() + IDLE_TIMEOUT;
         }
         Ok(self.remote.is_some() && channel.outgoing.is_empty())
     }
@@ -133,7 +134,7 @@ impl Peer {
             }
         }
         for stream in accepted {
-            match Channel::create(stream, None, CANDIDATE_TIMEOUT) {
+            match Channel::create(stream, RECORD_LEN, CANDIDATE_TIMEOUT) {
                 Ok(candidate) => self.candidates.push(candidate),
                 Err(_) => self.reject()?,
             }
@@ -150,7 +151,6 @@ impl Peer {
                     self.listener = None;
                     self.remote = Some(channel.verify(&self.credential, INITIATOR, &record)?);
                     channel.authenticate(&self.credential, LISTENER)?;
-                    self.secret = Key::zeroed();
                     channel.frame_max = FRAME_MAX;
                     channel.deadline = Instant::now() + IDLE_TIMEOUT;
                     self.channel = Some(channel);
@@ -176,7 +176,7 @@ impl Peer {
         Ok(())
     }
     /// Closes the invitation. This is reached only while no connection has proven the
-    /// invitation, so an unsupported hello is reported only as a refused connection. It
+    /// invitation, so a version-1 hello is reported only as a refused connection. It
     /// is not a session result, and an unauthenticated host can send it.
     fn closed(&self, status: ChurStatus, message: &'static str) -> Error {
         if self.legacy {
@@ -223,8 +223,7 @@ impl Peer {
 /// One TCP stream with its handshake state and direction keys.
 struct Channel {
     stream: TcpStream,
-    offer: Option<Offer>,
-    remote_role: u8,
+    hello: [u8; HELLO_LEN],
     tx_key: Option<Key>,
     rx_key: Option<Key>,
     tx_sequence: u64,
@@ -234,21 +233,24 @@ struct Channel {
     sent: usize,
     deadline: Instant,
     frame_max: usize,
+    ephemeral: Option<EphemeralKey>,
     transcript: [u8; 32],
     binding: Option<Key>,
 }
 impl Channel {
-    fn create(stream: TcpStream, offer: Option<Offer>, timeout: Duration) -> Result<Self> {
+    fn create(stream: TcpStream, frame_max: usize, timeout: Duration) -> Result<Self> {
         stream.set_nonblocking(true).map_err(network)?;
         stream.set_nodelay(true).map_err(network)?;
+        let ephemeral = EphemeralKey::generate()?;
+        let mut hello = [0; HELLO_LEN];
+        hello[..8].copy_from_slice(MAGIC);
+        hello[8..40].copy_from_slice(&random::array::<32>()?);
+        hello[40..].copy_from_slice(&ephemeral.public_key());
         let mut outgoing = Zeroizing::new(Vec::new());
-        if let Some(offer) = &offer {
-            outgoing.extend_from_slice(offer.bytes());
-        }
+        outgoing.extend_from_slice(&hello);
         Ok(Self {
             stream,
-            remote_role: if offer.is_some() { LISTENER } else { INITIATOR },
-            offer,
+            hello,
             tx_key: None,
             rx_key: None,
             tx_sequence: 0,
@@ -257,7 +259,8 @@ impl Channel {
             outgoing,
             sent: 0,
             deadline: Instant::now() + timeout,
-            frame_max: RECORD_LEN,
+            frame_max,
+            ephemeral: Some(ephemeral),
             transcript: [0; 32],
             binding: None,
         })
@@ -265,7 +268,7 @@ impl Channel {
     /// Advances an unproven listener connection; a frame means the secret is proven.
     fn prove(&mut self, secret: &Key) -> Result<Option<Zeroizing<Vec<u8>>>> {
         self.pump(false)?;
-        self.handshake(secret)?;
+        self.handshake(secret, false)?;
         self.open()
     }
     /// Pumps bounded nonblocking IO. An established stream extends its idle deadline.
@@ -297,29 +300,14 @@ impl Channel {
             self.sent = 0;
         }
         let mut chunk = [0; 64 * 1024];
-        let flight_len = if self.tx_key.is_some() {
-            0
-        } else if self.remote_role == LISTENER {
-            REPLY_LEN
-        } else {
-            OFFER_LEN
-        };
-        // Read at most one full flight and one permitted frame. If TCP also
-        // carries the next frame, leave it in the socket until its turn.
-        let limit = flight_len + self.frame_max + 4 + 16;
         for _ in 0..16 {
-            let available = (limit - self.incoming.len()).min(chunk.len());
-            if available == 0 {
-                break;
-            }
-            match self.stream.read(&mut chunk[..available]) {
+            match self.stream.read(&mut chunk) {
                 Ok(0) => {
                     // A full final frame survives FIN; a truncated frame fails immediately.
                     let complete = if self.tx_key.is_none() {
-                        self.incoming.len() >= flight_len
-                            || peer::check_prefix(&self.incoming, self.remote_role).is_err()
+                        self.incoming.len() >= HELLO_LEN
                     } else if self.incoming.len() >= 4 {
-                        self.incoming.len() - 4 >= frame_length(&self.incoming)?
+                        self.incoming.len() >= frame_length(&self.incoming)? + 4
                     } else {
                         false
                     };
@@ -331,6 +319,11 @@ impl Channel {
                     break;
                 }
                 Ok(n) => {
+                    ensure!(
+                        self.incoming.len() + n <= self.frame_max + HELLO_LEN + 64,
+                        ResourceLimitExceeded,
+                        "peer frame exceeds limit"
+                    );
                     self.incoming.extend_from_slice(&chunk[..n]);
                     if extend {
                         self.deadline = Instant::now() + IDLE_TIMEOUT;
@@ -342,39 +335,43 @@ impl Channel {
         }
         Ok(())
     }
-    /// Completes exactly one exchange before the first authenticated record.
-    fn handshake(&mut self, secret: &Key) -> Result<bool> {
-        if self.tx_key.is_some() {
+    /// Derives both direction keys when the remote hello is complete; true once.
+    fn handshake(&mut self, secret: &Key, initiator: bool) -> Result<bool> {
+        if self.tx_key.is_some() || self.incoming.len() < 8 {
             return Ok(false);
         }
-        let initiator = self.remote_role == LISTENER;
-        peer::check_prefix(&self.incoming, self.remote_role)?;
-        let flight_len = if initiator { REPLY_LEN } else { OFFER_LEN };
-        if self.incoming.len() < flight_len {
+        ensure!(
+            &self.incoming[..8] != LEGACY_MAGIC,
+            UnsupportedVersion,
+            "the peer at this address uses an unsupported peer protocol version"
+        );
+        ensure!(
+            &self.incoming[..8] == MAGIC,
+            AuthenticationFailed,
+            "peer protocol differs"
+        );
+        if self.incoming.len() < HELLO_LEN {
             return Ok(false);
         }
-        let flight = &self.incoming[..flight_len];
-        let keys = if initiator {
-            let offer = self.offer.take().ok_or_else(|| {
-                Error::new(
-                    ChurStatus::AuthenticationFailed,
-                    "peer offer already consumed",
-                )
-            })?;
-            let reply = flight
-                .try_into()
-                .map_err(|_| Error::new(ChurStatus::InvalidInput, "invalid peer reply length"))?;
-            offer.finish(secret, reply)?
+        let remote: [u8; HELLO_LEN] = self.incoming[..HELLO_LEN]
+            .try_into()
+            .map_err(|_| Error::new(ChurStatus::InvalidInput, "peer hello length"))?;
+        self.incoming.drain(..HELLO_LEN);
+        let (first, second) = if initiator {
+            (&self.hello, &remote)
         } else {
-            let offer = flight
-                .try_into()
-                .map_err(|_| Error::new(ChurStatus::InvalidInput, "invalid peer offer length"))?;
-            let (reply, keys) = peer::answer(secret, offer)?;
-            self.outgoing.extend_from_slice(&reply);
-            keys
+            (&remote, &self.hello)
         };
-        self.incoming.drain(..flight_len);
-        self.transcript = keys.transcript;
+        self.transcript = chur_crypto::peer::transcript(first, second)?;
+        let remote_key: [u8; 32] = remote[40..]
+            .try_into()
+            .map_err(|_| Error::new(ChurStatus::InvalidInput, "peer hello length"))?;
+        let shared = self
+            .ephemeral
+            .take()
+            .ok_or_else(|| Error::new(ChurStatus::InternalFailure, "peer key was used"))?
+            .agree(&remote_key)?;
+        let keys = chur_crypto::peer::session_keys(secret, &shared, &self.transcript)?;
         let (tx, rx) = if initiator {
             (keys.initiator, keys.listener)
         } else {
@@ -635,7 +632,7 @@ mod tests {
         let (mut listener, port, secret) = invitation();
         let _idle = TcpStream::connect((LOOPBACK, port)).unwrap();
         let mut garbage = TcpStream::connect((LOOPBACK, port)).unwrap();
-        garbage.write_all(&[0; OFFER_LEN]).unwrap();
+        garbage.write_all(&[0; HELLO_LEN]).unwrap();
         await_failures(&mut listener, 1, || {});
         let mut right = join(&mut listener, port, secret);
         assert_eq!(
@@ -648,7 +645,7 @@ mod tests {
         let (mut listener, port, _) = invitation();
         listener.failures = ATTEMPTS_MAX - 1;
         let mut garbage = TcpStream::connect((LOOPBACK, port)).unwrap();
-        garbage.write_all(&[0; OFFER_LEN]).unwrap();
+        garbage.write_all(&[0; HELLO_LEN]).unwrap();
         let error = listener_failure(&mut listener, || {});
         assert_eq!(error.status(), ChurStatus::AuthenticationFailed);
         let (mut expired, _, _) = invitation();
@@ -659,37 +656,35 @@ mod tests {
         );
     }
     #[test]
-    fn earlier_protocols_are_refused_with_unsupported_version() {
-        for magic in [b"CHURP2P1", b"CHURP2P2"] {
-            let raw = TcpListener::bind((LOOPBACK, 0)).unwrap();
-            let port = raw.local_addr().unwrap().port();
-            let mut connector =
-                Peer::connect(LOOPBACK, port, Key::new([1; 32]), credential(3, 0x30)).unwrap();
-            let (mut legacy, _) = raw.accept().unwrap();
-            legacy.write_all(magic).unwrap();
-            legacy.shutdown(Shutdown::Write).unwrap();
-            let deadline = Instant::now() + Duration::from_secs(3);
-            let error = loop {
-                assert!(Instant::now() < deadline, "old hello was not refused");
-                match connector.poll() {
-                    Err(error) => break error,
-                    Ok(ready) => assert!(!ready),
-                }
-                std::thread::sleep(Duration::from_millis(1));
-            };
-            assert_eq!(error.status(), ChurStatus::UnsupportedVersion);
-            // A listener closes the old connection, stays open, and reports the version at expiry.
-            let (mut listener, port, _) = invitation();
-            let mut old = TcpStream::connect((LOOPBACK, port)).unwrap();
-            old.write_all(magic).unwrap();
-            old.shutdown(Shutdown::Write).unwrap();
-            await_failures(&mut listener, 1, || {});
-            listener.deadline = Instant::now();
-            assert_eq!(
-                listener.poll().unwrap_err().status(),
-                ChurStatus::UnsupportedVersion
-            );
-        }
+    fn a_version_one_peer_is_refused_with_unsupported_version() {
+        let raw = TcpListener::bind((LOOPBACK, 0)).unwrap();
+        let port = raw.local_addr().unwrap().port();
+        let mut connector =
+            Peer::connect(LOOPBACK, port, Key::new([1; 32]), credential(3, 0x30)).unwrap();
+        let (mut legacy, _) = raw.accept().unwrap();
+        legacy.write_all(LEGACY_MAGIC).unwrap();
+        legacy.write_all(&[7; 32]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let error = loop {
+            assert!(Instant::now() < deadline, "old hello was not refused");
+            match connector.poll() {
+                Err(error) => break error,
+                Ok(ready) => assert!(!ready),
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        assert_eq!(error.status(), ChurStatus::UnsupportedVersion);
+        // A listener closes the old connection, stays open, and reports the version at expiry.
+        let (mut listener, port, _) = invitation();
+        let mut old = TcpStream::connect((LOOPBACK, port)).unwrap();
+        old.write_all(LEGACY_MAGIC).unwrap();
+        old.write_all(&[7; 32]).unwrap();
+        await_failures(&mut listener, 1, || {});
+        listener.deadline = Instant::now();
+        assert_eq!(
+            listener.poll().unwrap_err().status(),
+            ChurStatus::UnsupportedVersion
+        );
     }
     #[test]
     fn a_handshake_with_a_key_other_than_the_enrolled_device_key_fails() {
@@ -743,14 +738,13 @@ mod tests {
         second.secret = secret.duplicate();
         // A host that holds the invitation completes the handshake and sends the old record.
         let stream = TcpStream::connect((LOOPBACK, port)).unwrap();
-        let mut replayer =
-            Channel::create(stream, Some(Offer::generate().unwrap()), IDLE_TIMEOUT).unwrap();
+        let mut replayer = Channel::create(stream, FRAME_MAX, IDLE_TIMEOUT).unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
             assert!(Instant::now() < deadline, "replay handshake did not finish");
             assert!(!second.poll().unwrap());
             replayer.pump(true).unwrap();
-            if replayer.handshake(&secret).unwrap() {
+            if replayer.handshake(&secret, true).unwrap() {
                 break;
             }
             std::thread::sleep(Duration::from_millis(1));

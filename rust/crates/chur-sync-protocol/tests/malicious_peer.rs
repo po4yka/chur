@@ -3,7 +3,7 @@
 #![allow(clippy::expect_used, clippy::panic)]
 
 use chur_core::{ChurStatus, Id};
-use chur_crypto::{Key, Nonce, post_quantum::recipient_public};
+use chur_crypto::{Key, Nonce};
 use chur_sync_protocol::checkpoint::{Checkpoint, CheckpointHead};
 use chur_sync_protocol::membership::EnrollmentRecord;
 use chur_sync_protocol::operation::{DeviceSigningKey, Operation};
@@ -34,8 +34,7 @@ fn operation(key: &DeviceSigningKey, sequence: u64, previous: [u8; 32], marker: 
 #[test]
 fn replay_omission_key_substitution_rollback_and_equivocation_fail_closed() {
     let owner_key = DeviceSigningKey::from_seed([5; 32]);
-    let recipient = recipient_public(&Key::new([6; 32])).expect("recipient key");
-    let initial = EnrollmentRecord::initial(id(1), id(2), owner_key.verifying_key(), recipient)
+    let initial = EnrollmentRecord::initial(id(1), id(2), owner_key.verifying_key(), [6; 32])
         .expect("initial enrollment")
         .sign(&owner_key);
     let membership = MembershipState::bootstrap(&initial).expect("membership");
@@ -151,8 +150,7 @@ fn replay_omission_key_substitution_rollback_and_equivocation_fail_closed() {
 #[test]
 fn a_peer_checkpoint_floor_admits_the_chain_one_operation_at_a_time() {
     let owner_key = DeviceSigningKey::from_seed([5; 32]);
-    let recipient = recipient_public(&Key::new([6; 32])).expect("recipient key");
-    let initial = EnrollmentRecord::initial(id(1), id(2), owner_key.verifying_key(), recipient)
+    let initial = EnrollmentRecord::initial(id(1), id(2), owner_key.verifying_key(), [6; 32])
         .expect("initial enrollment")
         .sign(&owner_key);
     let membership = MembershipState::bootstrap(&initial).expect("membership");

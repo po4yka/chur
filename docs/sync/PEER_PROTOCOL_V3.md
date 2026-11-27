@@ -1,6 +1,6 @@
 # Internal peer transport version 3
 
-An ordinary device offers one foreground invitation. The invitation text is
+The isolated post-quantum build offers one foreground invitation. Ordinary release devices use the [version-2 peer protocol](../adr/0067-signed-peer-transcript-with-x25519.md). The invitation text is
 `chur-p2p3/IPv4:port#secret_hex`. The secret is 32 random bytes. Only the
 literal interface address goes to the listener. An unversioned invitation or
 a different protocol version fails before the client connects.

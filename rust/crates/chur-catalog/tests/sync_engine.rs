@@ -12,7 +12,6 @@ use chur_catalog::{
 use chur_core::Id;
 use chur_crypto::{Key, Nonce, random};
 use chur_sync_protocol::KeyDomain;
-use chur_sync_protocol::checkpoint::{Checkpoint, CheckpointHead};
 use chur_sync_protocol::membership::{EnrollmentRecord, RevocationRecord};
 use chur_sync_protocol::operation::{DeviceSigningKey, Operation};
 use chur_sync_protocol::payload::{OperationPayload, PayloadBody};
@@ -29,89 +28,21 @@ fn unlocked_processing_removes_validated_records_and_reports_rejections() {
     let mut db = CatalogDb::open(&CatalogLocation::Memory, &catalog_key).expect("catalog");
     schema::open_at_current_version(&mut db, 1).expect("schema");
     let signing_key = DeviceSigningKey::from_seed([3; 32]);
-    let enrollment = EnrollmentRecord::initial(
-        vault_id,
-        id(4),
-        signing_key.verifying_key(),
-        chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([5; 32]))
-            .expect("test recipient key"),
-    )
-    .expect("enrollment")
-    .sign(&signing_key);
+    let enrollment =
+        EnrollmentRecord::initial(vault_id, id(4), signing_key.verifying_key(), [5; 32])
+            .expect("enrollment")
+            .sign(&signing_key);
     let (membership, mut log, operation) =
         sync_receive::provision_initial_membership(&mut db, &root, &signing_key, &enrollment)
             .expect("provision");
     let checkpoint = log
         .issue_own_checkpoint(&mut db, &membership, &id(4), &signing_key, 7)
         .expect("checkpoint");
-    sync_engine::confirm_peer_history(&db, &id(4), &checkpoint.encode()).expect("delivered prefix");
-    assert_eq!(
-        sync_engine::confirm_peer_history(&db, &id(9), &checkpoint.encode())
-            .expect_err("checkpoint of another device")
-            .status(),
-        chur_core::ChurStatus::AuthenticationFailed
-    );
-    for (sequence, status) in [
-        (1, chur_core::ChurStatus::SyncHeadRollback),
-        (2, chur_core::ChurStatus::RecoveryRequired),
-    ] {
-        let unseen = Checkpoint::new(
-            vault_id,
-            id(4),
-            sequence,
-            membership.generation(),
-            *membership.commitment(),
-            vec![CheckpointHead::new(id(4), sequence, [0x55; 32])],
-            *checkpoint.collection_epoch_commitment(),
-            *checkpoint.catalog_state_commitment(),
-        )
-        .expect("checkpoint")
-        .sign(&signing_key);
-        assert_eq!(
-            sync_engine::confirm_peer_history(&db, &id(4), &unseen.encode())
-                .expect_err("missing signed prefix")
-                .status(),
-            status
-        );
-    }
     let path = std::env::temp_dir().join(format!(
         "chur-sync-engine-{}",
         random::id().expect("random id").to_hex()
     ));
     let vault_root = VaultRoot::new(&path);
-    let current = operation.encode();
-    let legacy = include_bytes!("../../../../test-vectors/internal-pq/classical-operation.bin");
-    for kind in [StagedKind::Operation, StagedKind::Checkpoint] {
-        let record = match kind {
-            StagedKind::Operation => current.clone(),
-            StagedKind::Checkpoint => checkpoint.encode(),
-        };
-        assert_eq!(
-            sync_engine::stage_inbound_records(
-                &vault_root,
-                vault_id,
-                kind,
-                8,
-                [record.as_slice(), legacy]
-            )
-            .expect_err("old page record")
-            .status(),
-            chur_core::ChurStatus::UnsupportedVersion
-        );
-    }
-    assert_eq!(
-        sync_engine::stage_inbound_records(
-            &vault_root,
-            vault_id,
-            StagedKind::Operation,
-            8,
-            std::iter::repeat_n(current.as_slice(), 257)
-        )
-        .expect_err("oversized page")
-        .status(),
-        chur_core::ChurStatus::ResourceLimitExceeded
-    );
-    assert!(!vault_root.sync_inbox(&vault_id).exists());
     sync_engine::stage_inbound(
         &vault_root,
         vault_id,
@@ -128,14 +59,12 @@ fn unlocked_processing_removes_validated_records_and_reports_rejections() {
         &checkpoint.encode(),
     )
     .expect("stage checkpoint");
-    let mut bad_signature = current;
-    *bad_signature.last_mut().expect("signature") ^= 1;
     sync_engine::stage_inbound(
         &vault_root,
         vault_id,
         StagedKind::Operation,
         10,
-        &bad_signature,
+        b"malformed",
     )
     .expect("stage malformed");
     let mut staging = LockedStaging::open(vault_root.sync_inbox(&vault_id)).expect("staging");
@@ -147,7 +76,7 @@ fn unlocked_processing_removes_validated_records_and_reports_rejections() {
     assert_eq!(report.rejected, 1);
     assert_eq!(
         report.first_rejection,
-        Some(chur_core::ChurStatus::AuthenticationFailed)
+        Some(chur_core::ChurStatus::UnsupportedVersion)
     );
     assert_eq!(staging.len(10).expect("remaining"), 0);
     std::fs::remove_dir_all(path).expect("cleanup");
@@ -167,15 +96,10 @@ fn a_fork_verdict_outranks_an_earlier_rejection() {
     let mut db = CatalogDb::open(&CatalogLocation::Memory, &catalog_key).expect("catalog");
     schema::open_at_current_version(&mut db, 1).expect("schema");
     let signing_key = DeviceSigningKey::from_seed([3; 32]);
-    let enrollment = EnrollmentRecord::initial(
-        vault_id,
-        id(4),
-        signing_key.verifying_key(),
-        chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([5; 32]))
-            .expect("test recipient key"),
-    )
-    .expect("enrollment")
-    .sign(&signing_key);
+    let enrollment =
+        EnrollmentRecord::initial(vault_id, id(4), signing_key.verifying_key(), [5; 32])
+            .expect("enrollment")
+            .sign(&signing_key);
     let (_, _, accepted) =
         sync_receive::provision_initial_membership(&mut db, &root, &signing_key, &enrollment)
             .expect("provision");
@@ -237,10 +161,8 @@ fn a_fork_verdict_outranks_an_earlier_rejection() {
         random::id().expect("random id").to_hex()
     ));
     let vault_root = VaultRoot::new(&path);
-    let mut bad_signature = accepted.encode();
-    *bad_signature.last_mut().expect("signature") ^= 1;
     for (staged_at_ms, record) in [
-        (7, bad_signature),
+        (7, b"malformed".to_vec()),
         (8, accepted.encode()),
         (9, fork.encode()),
     ] {
@@ -281,15 +203,9 @@ fn a_revoked_peer_tail_applies_from_the_retained_inbox() {
     let mut db = CatalogDb::open(&CatalogLocation::Memory, &catalog_key).expect("catalog");
     schema::open_at_current_version(&mut db, 1).expect("schema");
     let owner_key = DeviceSigningKey::from_seed([3; 32]);
-    let initial = EnrollmentRecord::initial(
-        vault_id,
-        id(4),
-        owner_key.verifying_key(),
-        chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([5; 32]))
-            .expect("test recipient key"),
-    )
-    .expect("enrollment")
-    .sign(&owner_key);
+    let initial = EnrollmentRecord::initial(vault_id, id(4), owner_key.verifying_key(), [5; 32])
+        .expect("enrollment")
+        .sign(&owner_key);
     let (membership, _, _) =
         sync_receive::provision_initial_membership(&mut db, &root, &owner_key, &initial)
             .expect("provision");
@@ -299,8 +215,7 @@ fn a_revoked_peer_tail_applies_from_the_retained_inbox() {
         vault_id,
         id(6),
         peer_key.verifying_key(),
-        chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([12; 32]))
-            .expect("test recipient key"),
+        [12; 32],
         2,
         id(4),
         2,

@@ -1,8 +1,5 @@
 # Direct peer synchronization
 
-The classical wire profile below is historical in the internal post-quantum build. See [ADR-0073](../adr/0073-internal-post-quantum-profile.md) for the required profile and [peer protocol v3](PEER_PROTOCOL_V3.md) for the direct transport.
-
-
 > **Status:** Accepted P2P transport contract; [ADR-0065](../adr/0065-peer-only-sync-without-accounts.md)
 
 ## 1. Scope

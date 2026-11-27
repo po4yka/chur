@@ -1749,27 +1749,78 @@ fn a_moved_cut_or_foreign_catalog_export_record_installs_nothing() {
     .expect("restore the undamaged package");
 }
 
-/// The pinned archive predates the internal public-key profile. A correct
-/// password must not let its classical descriptor create a local vault.
+/// The object identifier inside `tests/fixtures/backup-v1-raw-catalog.churbak`.
+const LEGACY_OBJECT: &str = "06476c2ab576645cad147b2b45a839d7";
+
+/// A version 1 package, written by a build before ADR-0068 with a copy of the
+/// SQLCipher file as its catalog and a v1 object container, still restores.
+/// The restored vault then travels through a version 2 package with a new v2
+/// container beside the old one, so both container versions and both package
+/// versions meet in one chain.
 #[test]
-fn a_classical_raw_catalog_package_is_refused_before_installation() {
-    let fixture = include_bytes!("fixtures/backup-v1-raw-catalog.churbak");
-    assert_eq!(&fixture[8..10], &[0x00, 0x01]);
-    let destination = scratch_root();
-    let error = backup::restore(
-        &destination,
+fn a_version_one_package_still_restores_and_moves_on_to_version_two() {
+    let fixture = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/backup-v1-raw-catalog.churbak"
+    ))
+    .expect("the version 1 fixture");
+    assert_eq!(&fixture[8..10], &[0x00, 0x01], "the fixture is version 1");
+    // The object the fixture build imported, as its generator printed it.
+    let legacy = Id::new(
+        (0..16)
+            .map(|i| u8::from_str_radix(&LEGACY_OBJECT[2 * i..2 * i + 2], 16).unwrap())
+            .collect::<Vec<u8>>()
+            .try_into()
+            .unwrap(),
+    )
+    .expect("fixture object");
+
+    let first = scratch_root();
+    backup::restore(
+        &first,
         &mut Cursor::new(fixture),
         PASSWORD,
         &mut Uninterrupted,
     )
-    .expect_err("classical descriptor must be refused");
-    assert_eq!(error.status(), ChurStatus::UnsupportedVersion);
-    assert!(destination.registry_names().unwrap().is_empty());
+    .expect("restore the version 1 package");
+    let mut session = vault::unlock_with_password(&first, PASSWORD, NOW + 1_000).expect("unlock");
+    let legacy_bytes = plaintext(4_096, 0x5151).to_vec();
+    assert_eq!(exported(&session, &legacy), legacy_bytes);
     assert_eq!(
-        std::fs::read_dir(destination.vaults())
-            .map(|entries| entries.count())
-            .unwrap_or(0),
-        0
+        chur_catalog::store::streams(session.catalog_ref().unwrap(), &legacy).unwrap()[0]
+            .container_version,
+        1
+    );
+    let album = Id::new([0x0a; 16]).unwrap();
+    assert_eq!(
+        chur_catalog::store::album_name(session.catalog_ref().unwrap(), &album).unwrap(),
+        Some(String::from("Legacy album"))
+    );
+
+    let (fresh, fresh_bytes) = import_one(&mut session, 70_000, "fresh.jpg", 0x5252);
+    let mut package = Cursor::new(Vec::new());
+    backup::create(&mut session, &mut package, NOW + 2_000, &mut Uninterrupted).expect("create");
+    let source_rows = logical_catalog(session.catalog_ref().unwrap());
+    session.lock().expect("lock");
+    assert_eq!(&package.get_ref()[8..10], &[0x00, 0x02]);
+
+    let second = scratch_root();
+    backup::restore(&second, &mut package, PASSWORD, &mut Uninterrupted).expect("restore v2");
+    let opened = vault::unlock_with_password(&second, PASSWORD, NOW + 3_000).expect("unlock");
+    assert_eq!(logical_catalog(opened.catalog_ref().unwrap()), source_rows);
+    assert_eq!(exported(&opened, &legacy), legacy_bytes);
+    assert_eq!(exported(&opened, &fresh), fresh_bytes);
+    let versions: Vec<u16> = [legacy, fresh]
+        .iter()
+        .map(|id| {
+            chur_catalog::store::streams(opened.catalog_ref().unwrap(), id).unwrap()[0]
+                .container_version
+        })
+        .collect();
+    assert_eq!(versions, vec![1, 2]);
+    assert_eq!(
+        chur_catalog::store::album_name(opened.catalog_ref().unwrap(), &album).unwrap(),
+        Some(String::from("Legacy album"))
     );
 }
 

@@ -1,6 +1,5 @@
 //! Outbound collection-sharing orchestration over durable protocol primitives.
 
-use chur_crypto::post_quantum::{RECIPIENT_LEN, VERIFY_LEN};
 use std::collections::BTreeMap;
 
 use chur_core::{ChurStatus, Error, Id, Result, ensure};
@@ -30,21 +29,9 @@ use crate::{
 #[derive(Clone)]
 pub enum IssuerMembershipRecord {
     /// Device enrollment or key rotation.
-    Enrollment(Box<EnrollmentRecord>),
+    Enrollment(EnrollmentRecord),
     /// Device revocation and accepted operation head.
-    Revocation(Box<RevocationRecord>),
-}
-
-impl From<EnrollmentRecord> for IssuerMembershipRecord {
-    fn from(record: EnrollmentRecord) -> Self {
-        Self::Enrollment(Box::new(record))
-    }
-}
-
-impl From<RevocationRecord> for IssuerMembershipRecord {
-    fn from(record: RevocationRecord) -> Self {
-        Self::Revocation(Box::new(record))
-    }
+    Revocation(RevocationRecord),
 }
 
 /// Complete public evidence needed to authenticate one sharing issuer.
@@ -233,8 +220,8 @@ fn prepare_share_to_device(
     collection_id: Id,
     recipient_vault_id: Id,
     recipient_device_id: Id,
-    recipient_signing_public_key: [u8; VERIFY_LEN],
-    recipient_hpke_public_key: [u8; RECIPIENT_LEN],
+    recipient_signing_public_key: [u8; 32],
+    recipient_hpke_public_key: [u8; 32],
     permissions: PermissionProfile,
     fingerprint_verified: bool,
     recipient_history: Option<&BTreeMap<u64, MembershipState>>,
@@ -1325,7 +1312,7 @@ fn issuer_state<'a>(
 fn device_pairs(
     history: &BTreeMap<u64, MembershipState>,
     device_id: &Id,
-) -> Vec<([u8; VERIFY_LEN], [u8; RECIPIENT_LEN])> {
+) -> Vec<([u8; 32], [u8; 32])> {
     history
         .values()
         .filter_map(|state| {
@@ -1337,11 +1324,11 @@ fn device_pairs(
 }
 
 fn rotation_follows(
-    pairs: &[([u8; VERIFY_LEN], [u8; RECIPIENT_LEN])],
-    old_signing: &[u8; VERIFY_LEN],
-    old_hpke: &[u8; RECIPIENT_LEN],
-    new_signing: &[u8; VERIFY_LEN],
-    new_hpke: &[u8; RECIPIENT_LEN],
+    pairs: &[([u8; 32], [u8; 32])],
+    old_signing: &[u8; 32],
+    old_hpke: &[u8; 32],
+    new_signing: &[u8; 32],
+    new_hpke: &[u8; 32],
 ) -> bool {
     let Some(old_index) = pairs
         .iter()
@@ -1729,8 +1716,8 @@ mod tests {
             .accept_enrollment(&first_rotation, &device, 2)
             .expect("accept hpke rotation");
         let records = [
-            IssuerMembershipRecord::from(initial.clone()),
-            IssuerMembershipRecord::from(first_rotation.clone()),
+            IssuerMembershipRecord::Enrollment(initial.clone()),
+            IssuerMembershipRecord::Enrollment(first_rotation.clone()),
         ];
         let operations = [first_outer.clone(), second_outer.clone()];
         db.connection()
@@ -1810,9 +1797,9 @@ mod tests {
         .expect("substitution")
         .sign(substituted.signing_key());
         let forged_records = [
-            IssuerMembershipRecord::from(initial.clone()),
-            IssuerMembershipRecord::from(first_rotation.clone()),
-            IssuerMembershipRecord::from(forged_history),
+            IssuerMembershipRecord::Enrollment(initial.clone()),
+            IssuerMembershipRecord::Enrollment(first_rotation.clone()),
+            IssuerMembershipRecord::Enrollment(forged_history),
         ];
         assert!(
             prepare_share_for_device(
@@ -1858,9 +1845,9 @@ mod tests {
             )
             .expect("second rotation outer");
         let records = [
-            IssuerMembershipRecord::from(initial),
-            IssuerMembershipRecord::from(first_rotation),
-            IssuerMembershipRecord::from(second_rotation),
+            IssuerMembershipRecord::Enrollment(initial),
+            IssuerMembershipRecord::Enrollment(first_rotation),
+            IssuerMembershipRecord::Enrollment(second_rotation),
         ];
         let operations = [first_outer, second_outer, third_outer];
         let rotated = prepare_share_for_device(
@@ -2131,8 +2118,8 @@ mod tests {
             .accept_enrollment(&peer_enrollment, &second_device, 2)
             .expect("accept peer");
         let recipient_records = [
-            IssuerMembershipRecord::from(second_enrollment.clone()),
-            IssuerMembershipRecord::from(peer_enrollment),
+            IssuerMembershipRecord::Enrollment(second_enrollment.clone()),
+            IssuerMembershipRecord::Enrollment(peer_enrollment),
         ];
         let recipient_operations = [initial_operation, peer_operation];
         let incomplete_recipient = IssuerEvidence {
@@ -2577,7 +2564,9 @@ mod tests {
             .map(|bytes| Operation::decode(bytes).expect("operation"))
             .collect::<Vec<_>>();
         let evidence = IssuerEvidence {
-            membership: &[IssuerMembershipRecord::from(source_enrollment.clone())],
+            membership: &[IssuerMembershipRecord::Enrollment(
+                source_enrollment.clone(),
+            )],
             operations: &operations,
         };
         let membership = [(
@@ -2750,8 +2739,8 @@ mod tests {
         )
         .expect("store rotated identity");
         let recipient_records = [
-            IssuerMembershipRecord::from(recipient_enrollment.clone()),
-            IssuerMembershipRecord::from(rotation),
+            IssuerMembershipRecord::Enrollment(recipient_enrollment.clone()),
+            IssuerMembershipRecord::Enrollment(rotation),
         ];
         let recipient_operations = [initial_outer, rotation_outer];
         let second = prepare_share_for_device(
@@ -2803,7 +2792,9 @@ mod tests {
             &mut recipient,
             &recipient_root,
             &[IssuerEvidence {
-                membership: &[IssuerMembershipRecord::from(source_enrollment.clone())],
+                membership: &[IssuerMembershipRecord::Enrollment(
+                    source_enrollment.clone(),
+                )],
                 operations: &source_operations,
             }],
             &collection_records,
@@ -2820,7 +2811,9 @@ mod tests {
             other.membership().clone(),
             other.membership_operation().clone(),
         )];
-        let generation_one = [IssuerMembershipRecord::from(source_enrollment.clone())];
+        let generation_one = [IssuerMembershipRecord::Enrollment(
+            source_enrollment.clone(),
+        )];
         accept_share(
             &mut recipient,
             &recipient_root,
@@ -2879,8 +2872,7 @@ mod tests {
             source_vault,
             replacement_device,
             replacement_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([32; 32]))
-                .expect("test recipient key"),
+            [32; 32],
             log.head(&source_device).expect("source head").0 + 1,
             source_device,
             2,
@@ -2918,8 +2910,8 @@ mod tests {
         )
         .expect("fresh grant at generation 2");
         let generation_two = [
-            IssuerMembershipRecord::from(source_enrollment.clone()),
-            IssuerMembershipRecord::from(replacement_enrollment.clone()),
+            IssuerMembershipRecord::Enrollment(source_enrollment.clone()),
+            IssuerMembershipRecord::Enrollment(replacement_enrollment.clone()),
         ];
         let generation_two_operations = sync_log::records_after(&source, &source_device, 0)
             .expect("generation two operations")
@@ -3048,9 +3040,9 @@ mod tests {
             .map(|bytes| Operation::decode(bytes).expect("operation"))
             .collect::<Vec<_>>();
         let current_membership = [
-            IssuerMembershipRecord::from(source_enrollment),
-            IssuerMembershipRecord::from(replacement_enrollment),
-            IssuerMembershipRecord::from(revocation),
+            IssuerMembershipRecord::Enrollment(source_enrollment),
+            IssuerMembershipRecord::Enrollment(replacement_enrollment),
+            IssuerMembershipRecord::Revocation(revocation),
         ];
         let late_membership = [
             (

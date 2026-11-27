@@ -119,7 +119,7 @@ fn identity_provisioning_is_private_atomic_and_idempotent() {
         0
     );
 
-    let mut bytes = vec![0u8; 64 * 1024];
+    let mut bytes = vec![0u8; 4096];
     let mut written = 0;
     assert_eq!(
         unsafe { chur_sharing_identity(session, bytes.as_mut_ptr(), bytes.len(), &mut written) },
@@ -127,18 +127,14 @@ fn identity_provisioning_is_private_atomic_and_idempotent() {
     );
     bytes.truncate(written);
     let mut reader = Reader::new(&bytes, chur_core::ChurStatus::NonCanonicalEncoding);
-    assert_eq!(reader.u16().expect("version"), 2);
+    assert_eq!(reader.u16().expect("version"), 1);
     let vault_id = reader.id().expect("vault");
     let device_id = reader.id().expect("device");
-    let signing = reader.fixed::<1952>().expect("signing key");
-    let hpke = reader.fixed::<1216>().expect("HPKE key");
-    let display = reader.variable(79).expect("fingerprint");
-    let enrollment = EnrollmentRecord::decode(
-        reader
-            .variable(EnrollmentRecord::LEN as u32)
-            .expect("enrollment"),
-    )
-    .expect("valid enrollment");
+    let signing = reader.fixed::<32>().expect("signing key");
+    let hpke = reader.fixed::<32>().expect("HPKE key");
+    let display = reader.variable(49).expect("fingerprint");
+    let enrollment = EnrollmentRecord::decode(reader.variable(270).expect("enrollment"))
+        .expect("valid enrollment");
     let operation = Operation::decode(reader.variable(16_777_216).expect("operation"))
         .expect("valid operation");
     reader.finish().expect("complete record");
@@ -198,7 +194,7 @@ fn identity_provisioning_is_private_atomic_and_idempotent() {
         unsafe { chur_vault_unlock(recipient_runtime, &unlock, &mut recipient_session) },
         0
     );
-    let mut recipient_identity = vec![0u8; 64 * 1024];
+    let mut recipient_identity = vec![0u8; 4096];
     let mut recipient_identity_length = 0;
     assert_eq!(
         unsafe {
@@ -216,14 +212,12 @@ fn identity_provisioning_is_private_atomic_and_idempotent() {
         &recipient_identity,
         chur_core::ChurStatus::NonCanonicalEncoding,
     );
-    assert_eq!(recipient_reader.u16().expect("version"), 2);
+    assert_eq!(recipient_reader.u16().expect("version"), 1);
     let recipient_vault_id = recipient_reader.id().expect("recipient vault");
     let recipient_device_id = recipient_reader.id().expect("recipient device");
+    recipient_reader.slice(64).expect("recipient public keys");
     recipient_reader
-        .slice(1952 + 1216)
-        .expect("recipient public keys");
-    recipient_reader
-        .variable(79)
+        .variable(49)
         .expect("recipient fingerprint");
     let recipient_enrollment = recipient_reader
         .variable(EnrollmentRecord::LEN as u32)
@@ -257,10 +251,10 @@ fn identity_provisioning_is_private_atomic_and_idempotent() {
     );
     assert_eq!(
         preview_reader
-            .variable(79)
+            .variable(49)
             .expect("preview fingerprint")
             .len(),
-        79
+        49
     );
     preview_reader.finish().expect("complete preview");
     let mut forged = recipient_enrollment.clone();
@@ -306,7 +300,7 @@ fn identity_provisioning_is_private_atomic_and_idempotent() {
     assert_eq!(written, 0);
     assert_eq!(short, [0xa5]);
 
-    let mut share = vec![0u8; 64 * 1024];
+    let mut share = vec![0u8; 4096];
     assert_eq!(
         unsafe {
             chur_sharing_prepare(
@@ -385,10 +379,10 @@ fn identity_provisioning_is_private_atomic_and_idempotent() {
     assert_eq!(overview_reader.u8().expect("verified"), 1);
     assert_eq!(
         overview_reader
-            .variable(79)
+            .variable(49)
             .expect("member fingerprint")
             .len(),
-        79
+        49
     );
     overview_reader.finish().expect("complete overview");
 
@@ -402,7 +396,7 @@ fn identity_provisioning_is_private_atomic_and_idempotent() {
         .variable(&recipient_initial_operation)
         .expect("recipient operation");
     let recipient_evidence = recipient_evidence.finish();
-    let mut device_share = vec![0u8; 64 * 1024];
+    let mut device_share = vec![0u8; 4096];
     let mut device_share_written = 0;
     assert_eq!(
         unsafe {
@@ -582,7 +576,7 @@ fn identity_provisioning_is_private_atomic_and_idempotent() {
         shared_object_id.as_bytes().as_slice(),
     ]
     .concat();
-    let mut request_bytes = vec![0u8; 1 + chur_sync_protocol::object_grant::ObjectPrekey::LEN];
+    let mut request_bytes = vec![0u8; 227];
     let mut request_length = 0;
     assert_eq!(
         unsafe {
@@ -600,7 +594,7 @@ fn identity_provisioning_is_private_atomic_and_idempotent() {
     request_bytes.truncate(request_length);
     assert_eq!(request_bytes[0], 1);
     let prekey_bytes = request_bytes[1..].to_vec();
-    let mut object_grant_bytes = vec![0u8; chur_sync_protocol::object_grant::ObjectKeyGrant::LEN];
+    let mut object_grant_bytes = vec![0u8; 346];
     let mut object_grant_length = 0;
     assert_eq!(
         unsafe {
@@ -865,7 +859,7 @@ fn identity_provisioning_is_private_atomic_and_idempotent() {
         0
     );
 
-    let mut share_replay = vec![0u8; 64 * 1024];
+    let mut share_replay = vec![0u8; 4096];
     let mut share_replay_written = 0;
     assert_eq!(
         unsafe {
@@ -954,10 +948,10 @@ fn identity_provisioning_is_private_atomic_and_idempotent() {
     assert_eq!(overview_reader.u8().expect("verified"), 1);
     assert_eq!(
         overview_reader
-            .variable(79)
+            .variable(49)
             .expect("revoked fingerprint")
             .len(),
-        79
+        49
     );
     overview_reader.finish().expect("complete revoked overview");
     let mut revoke_reader = Reader::new(&revoke, chur_core::ChurStatus::NonCanonicalEncoding);
@@ -989,7 +983,7 @@ fn identity_provisioning_is_private_atomic_and_idempotent() {
     assert_eq!(revoke_reader.u8().expect("rotation complete"), 1);
     revoke_reader.finish().expect("complete revocation record");
 
-    let mut replay = vec![0u8; 64 * 1024];
+    let mut replay = vec![0u8; 4096];
     let mut replay_written = 0;
     assert_eq!(
         unsafe {

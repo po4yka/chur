@@ -1216,15 +1216,9 @@ mod tests {
     #[test]
     fn duplicate_is_idempotent_and_conflict_freezes_the_device_chain() {
         let key = DeviceSigningKey::from_seed([3; 32]);
-        let enrollment = EnrollmentRecord::initial(
-            id(1),
-            id(2),
-            key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([4; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("enrollment")
-        .sign(&key);
+        let enrollment = EnrollmentRecord::initial(id(1), id(2), key.verifying_key(), [4; 32])
+            .expect("enrollment")
+            .sign(&key);
         let membership = MembershipState::bootstrap(&enrollment).expect("membership");
         let mut log = OperationLog::new();
         let first = operation(&key, 1, [0; 32], 5);
@@ -1254,15 +1248,9 @@ mod tests {
     #[test]
     fn gaps_wait_and_old_exact_records_remain_idempotent() {
         let key = DeviceSigningKey::from_seed([3; 32]);
-        let enrollment = EnrollmentRecord::initial(
-            id(1),
-            id(2),
-            key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([4; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("enrollment")
-        .sign(&key);
+        let enrollment = EnrollmentRecord::initial(id(1), id(2), key.verifying_key(), [4; 32])
+            .expect("enrollment")
+            .sign(&key);
         let membership = MembershipState::bootstrap(&enrollment).expect("membership");
         let first = operation(&key, 1, [0; 32], 5);
         let second = operation(&key, 2, first.digest(), 7);
@@ -1276,15 +1264,9 @@ mod tests {
     #[test]
     fn one_operation_identifier_cannot_name_a_second_log_position() {
         let key = DeviceSigningKey::from_seed([3; 32]);
-        let enrollment = EnrollmentRecord::initial(
-            id(1),
-            id(2),
-            key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([4; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("enrollment")
-        .sign(&key);
+        let enrollment = EnrollmentRecord::initial(id(1), id(2), key.verifying_key(), [4; 32])
+            .expect("enrollment")
+            .sign(&key);
         let membership = MembershipState::bootstrap(&enrollment).expect("membership");
         let first = operation(&key, 1, [0; 32], 5);
         let reused = Operation::seal(
@@ -1316,15 +1298,9 @@ mod tests {
     #[test]
     fn an_undo_makes_room_for_a_different_record_at_the_same_sequence() {
         let key = DeviceSigningKey::from_seed([3; 32]);
-        let enrollment = EnrollmentRecord::initial(
-            id(1),
-            id(2),
-            key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([4; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("enrollment")
-        .sign(&key);
+        let enrollment = EnrollmentRecord::initial(id(1), id(2), key.verifying_key(), [4; 32])
+            .expect("enrollment")
+            .sign(&key);
         let membership = MembershipState::bootstrap(&enrollment).expect("membership");
         let first = operation(&key, 1, [0; 32], 5);
         let mut log = OperationLog::new();
@@ -1353,23 +1329,16 @@ mod tests {
     #[test]
     fn key_rotation_keeps_historical_operations_verifiable() {
         let old_key = DeviceSigningKey::from_seed([3; 32]);
-        let initial = EnrollmentRecord::initial(
-            id(1),
-            id(2),
-            old_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([4; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("initial")
-        .sign(&old_key);
+        let initial = EnrollmentRecord::initial(id(1), id(2), old_key.verifying_key(), [4; 32])
+            .expect("initial")
+            .sign(&old_key);
         let mut membership = MembershipState::bootstrap(&initial).expect("membership");
         let new_key = DeviceSigningKey::from_seed([5; 32]);
         let rotation = EnrollmentRecord::new(
             id(1),
             id(2),
             new_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([6; 32]))
-                .expect("test recipient key"),
+            [6; 32],
             2,
             id(2),
             2,
@@ -1392,23 +1361,16 @@ mod tests {
     #[test]
     fn local_authoring_allocates_the_chain_and_current_causal_vector() {
         let owner_key = DeviceSigningKey::from_seed([3; 32]);
-        let initial = EnrollmentRecord::initial(
-            id(1),
-            id(2),
-            owner_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([4; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("initial")
-        .sign(&owner_key);
+        let initial = EnrollmentRecord::initial(id(1), id(2), owner_key.verifying_key(), [4; 32])
+            .expect("initial")
+            .sign(&owner_key);
         let mut membership = MembershipState::bootstrap(&initial).expect("membership");
         let peer_key = DeviceSigningKey::from_seed([5; 32]);
         let peer = EnrollmentRecord::new(
             id(1),
             id(6),
             peer_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([7; 32]))
-                .expect("test recipient key"),
+            [7; 32],
             2,
             id(2),
             2,
@@ -1540,15 +1502,9 @@ mod tests {
     #[test]
     fn checkpoint_floor_requires_the_pinned_chain_before_advancing() {
         let key = DeviceSigningKey::from_seed([3; 32]);
-        let enrollment = EnrollmentRecord::initial(
-            id(1),
-            id(2),
-            key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([4; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("enrollment")
-        .sign(&key);
+        let enrollment = EnrollmentRecord::initial(id(1), id(2), key.verifying_key(), [4; 32])
+            .expect("enrollment")
+            .sign(&key);
         let membership = MembershipState::bootstrap(&enrollment).expect("membership");
         let first = operation(&key, 1, [0; 32], 5);
         let second = operation(&key, 2, first.digest(), 6);
@@ -1615,15 +1571,9 @@ mod tests {
     #[test]
     fn new_device_bootstrap_uses_the_enrollment_attested_checkpoint_floor() {
         let owner_key = DeviceSigningKey::from_seed([3; 32]);
-        let initial = EnrollmentRecord::initial(
-            id(1),
-            id(2),
-            owner_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([4; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("initial")
-        .sign(&owner_key);
+        let initial = EnrollmentRecord::initial(id(1), id(2), owner_key.verifying_key(), [4; 32])
+            .expect("initial")
+            .sign(&owner_key);
         let first = operation(&owner_key, 1, [0; 32], 5);
         let checkpoint = crate::checkpoint::Checkpoint::new(
             id(1),
@@ -1646,8 +1596,7 @@ mod tests {
             id(1),
             id(3),
             peer_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([9; 32]))
-                .expect("test recipient key"),
+            [9; 32],
             2,
             id(2),
             2,
@@ -1706,23 +1655,16 @@ mod tests {
         Commitment,
     ) {
         let issuer_key = DeviceSigningKey::from_seed([3; 32]);
-        let initial = EnrollmentRecord::initial(
-            id(1),
-            id(2),
-            issuer_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([4; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("initial")
-        .sign(&issuer_key);
+        let initial = EnrollmentRecord::initial(id(1), id(2), issuer_key.verifying_key(), [4; 32])
+            .expect("initial")
+            .sign(&issuer_key);
         let mut membership = MembershipState::bootstrap(&initial).expect("membership");
         let revoked_key = DeviceSigningKey::from_seed([5; 32]);
         let enrollment = EnrollmentRecord::new(
             id(1),
             id(6),
             revoked_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([7; 32]))
-                .expect("test recipient key"),
+            [7; 32],
             2,
             id(2),
             2,
@@ -2019,9 +1961,8 @@ mod tests {
         let enrollment = EnrollmentRecord::new(
             id(1),
             id(90),
-            chur_crypto::post_quantum::IdentitySigner::from_seed(&[7; 32]).public(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([8; 32]))
-                .expect("test recipient key"),
+            [7; 32],
+            [8; 32],
             2,
             id(2),
             membership.generation() + 1,
@@ -2044,15 +1985,9 @@ mod tests {
     #[test]
     fn a_replayed_checkpoint_cannot_displace_the_retained_commitment() {
         let key = DeviceSigningKey::from_seed([3; 32]);
-        let enrollment = EnrollmentRecord::initial(
-            id(1),
-            id(2),
-            key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([4; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("enrollment")
-        .sign(&key);
+        let enrollment = EnrollmentRecord::initial(id(1), id(2), key.verifying_key(), [4; 32])
+            .expect("enrollment")
+            .sign(&key);
         let membership = MembershipState::bootstrap(&enrollment).expect("membership");
         let first = operation(&key, 1, [0; 32], 5);
         let second = operation(&key, 2, first.digest(), 6);

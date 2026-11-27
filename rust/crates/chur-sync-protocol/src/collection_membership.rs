@@ -4,16 +4,17 @@
 use std::collections::BTreeMap;
 
 use chur_core::{ChurStatus, Error, Id, Result, ensure};
-use chur_crypto::post_quantum::{RECIPIENT_LEN, SIGNATURE_LEN, VERIFY_LEN, validate_recipient};
 use chur_crypto::{Commitment, commit, tuple::tag};
 use chur_format::codec::{Reader, Writer};
 
 use crate::collection_operation::CollectionOperation;
 use crate::grant::{CollectionGrant, PermissionProfile, hpke_key_id};
-use crate::operation::{DeviceSigningKey, Operation, PROTOCOL_VERSION_V2, verify_device_signature};
+use crate::operation::{DeviceSigningKey, Operation, PROTOCOL_VERSION_V1, verify_ed25519};
 use crate::payload::{OperationPayload, PayloadBody};
 use crate::state::MembershipState;
 
+const PUBLIC_KEY_LEN: usize = 32;
+const SIGNATURE_LEN: usize = 64;
 const UPSERT_ACTION: u8 = 1;
 const REVOKE_ACTION: u8 = 2;
 
@@ -80,8 +81,8 @@ pub struct CollectionMembershipRecord {
     action: CollectionMembershipAction,
     recipient_identity_vault_id: Id,
     recipient_device_id: Id,
-    recipient_signing_public_key: [u8; VERIFY_LEN],
-    recipient_hpke_public_key: [u8; RECIPIENT_LEN],
+    recipient_signing_public_key: [u8; PUBLIC_KEY_LEN],
+    recipient_hpke_public_key: [u8; PUBLIC_KEY_LEN],
     collection_epoch: u64,
     issuer_identity_vault_id: Id,
     issuer_device_id: Id,
@@ -111,21 +112,21 @@ pub enum RecipientVerification {
 /// One pinned recipient key pair and its local verification state.
 #[derive(Clone)]
 pub struct RecipientPin {
-    signing_public_key: [u8; VERIFY_LEN],
-    hpke_public_key: [u8; RECIPIENT_LEN],
+    signing_public_key: [u8; PUBLIC_KEY_LEN],
+    hpke_public_key: [u8; PUBLIC_KEY_LEN],
     verification: RecipientVerification,
 }
 
 impl RecipientPin {
     /// Pinned recipient signing key.
     #[must_use]
-    pub const fn signing_public_key(&self) -> &[u8; VERIFY_LEN] {
+    pub const fn signing_public_key(&self) -> &[u8; PUBLIC_KEY_LEN] {
         &self.signing_public_key
     }
 
     /// Pinned recipient HPKE key.
     #[must_use]
-    pub const fn hpke_public_key(&self) -> &[u8; RECIPIENT_LEN] {
+    pub const fn hpke_public_key(&self) -> &[u8; PUBLIC_KEY_LEN] {
         &self.hpke_public_key
     }
 
@@ -139,8 +140,8 @@ impl RecipientPin {
 #[derive(Clone)]
 /// One current or historical recipient-device membership entry.
 pub struct CollectionMember {
-    signing_public_key: [u8; VERIFY_LEN],
-    hpke_public_key: [u8; RECIPIENT_LEN],
+    signing_public_key: [u8; PUBLIC_KEY_LEN],
+    hpke_public_key: [u8; PUBLIC_KEY_LEN],
     permissions: PermissionProfile,
     membership_generation: u64,
     active: bool,
@@ -149,13 +150,13 @@ pub struct CollectionMember {
 impl CollectionMember {
     /// Recipient signing key accepted for shared operations.
     #[must_use]
-    pub const fn signing_public_key(&self) -> &[u8; VERIFY_LEN] {
+    pub const fn signing_public_key(&self) -> &[u8; PUBLIC_KEY_LEN] {
         &self.signing_public_key
     }
 
     /// Recipient HPKE key accepted for grants.
     #[must_use]
-    pub const fn hpke_public_key(&self) -> &[u8; RECIPIENT_LEN] {
+    pub const fn hpke_public_key(&self) -> &[u8; PUBLIC_KEY_LEN] {
         &self.hpke_public_key
     }
 
@@ -262,7 +263,7 @@ impl CollectionMembershipState {
     pub fn restore_accepted(
         &mut self,
         record: &CollectionMembershipRecord,
-        issuer_signing_public_key: &[u8; VERIFY_LEN],
+        issuer_signing_public_key: &[u8; PUBLIC_KEY_LEN],
     ) -> Result<CollectionMembershipOutcome> {
         let encoded = record.encode();
         if let Some(outcome) = self.validate_next(record, &encoded)? {
@@ -760,13 +761,13 @@ impl CollectionMembershipState {
         &mut self,
         identity_vault_id: Id,
         device_id: Id,
-        signing_public_key: [u8; VERIFY_LEN],
-        hpke_public_key: [u8; RECIPIENT_LEN],
+        signing_public_key: [u8; PUBLIC_KEY_LEN],
+        hpke_public_key: [u8; PUBLIC_KEY_LEN],
     ) -> Result<()> {
         ensure!(
-            signing_public_key != [0; VERIFY_LEN] && validate_recipient(&hpke_public_key).is_ok(),
+            signing_public_key != [0; PUBLIC_KEY_LEN] && hpke_public_key != [0; PUBLIC_KEY_LEN],
             InvalidInput,
-            "verified recipient key is invalid"
+            "verified recipient key is zero"
         );
         self.pins.insert(
             (identity_vault_id, device_id),
@@ -785,13 +786,13 @@ impl CollectionMembershipState {
         &mut self,
         identity_vault_id: Id,
         device_id: Id,
-        signing_public_key: [u8; VERIFY_LEN],
-        hpke_public_key: [u8; RECIPIENT_LEN],
+        signing_public_key: [u8; PUBLIC_KEY_LEN],
+        hpke_public_key: [u8; PUBLIC_KEY_LEN],
     ) -> Result<()> {
         ensure!(
-            signing_public_key != [0; VERIFY_LEN] && validate_recipient(&hpke_public_key).is_ok(),
+            signing_public_key != [0; PUBLIC_KEY_LEN] && hpke_public_key != [0; PUBLIC_KEY_LEN],
             InvalidInput,
-            "rotated recipient key is invalid"
+            "rotated recipient key is zero"
         );
         let pin = self
             .pins
@@ -807,8 +808,8 @@ impl CollectionMembershipState {
         &mut self,
         identity_vault_id: Id,
         device_id: Id,
-        signing_public_key: [u8; VERIFY_LEN],
-        hpke_public_key: [u8; RECIPIENT_LEN],
+        signing_public_key: [u8; PUBLIC_KEY_LEN],
+        hpke_public_key: [u8; PUBLIC_KEY_LEN],
         verification: RecipientVerification,
     ) -> Result<()> {
         self.rotate_recipient_keys(
@@ -887,7 +888,7 @@ impl CollectionMembershipState {
 
 impl CollectionMembershipRecord {
     /// Exact canonical encoded length.
-    pub const LEN: usize = 164 + VERIFY_LEN + RECIPIENT_LEN + SIGNATURE_LEN;
+    pub const LEN: usize = 292;
 
     /// Builds one unsigned collection membership change.
     #[expect(
@@ -902,8 +903,8 @@ impl CollectionMembershipRecord {
         action: CollectionMembershipAction,
         recipient_identity_vault_id: Id,
         recipient_device_id: Id,
-        recipient_signing_public_key: [u8; VERIFY_LEN],
-        recipient_hpke_public_key: [u8; RECIPIENT_LEN],
+        recipient_signing_public_key: [u8; 32],
+        recipient_hpke_public_key: [u8; 32],
         collection_epoch: u64,
         issuer_identity_vault_id: Id,
         issuer_device_id: Id,
@@ -942,7 +943,7 @@ impl CollectionMembershipRecord {
         let (action, permission) = self.action.encode();
         let mut writer = Writer::with_capacity(Self::LEN);
         writer
-            .u16(PROTOCOL_VERSION_V2)
+            .u16(PROTOCOL_VERSION_V1)
             .id(&self.source_vault_id)
             .id(&self.collection_id)
             .u64(self.collection_membership_generation)
@@ -966,7 +967,7 @@ impl CollectionMembershipRecord {
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let mut reader = Reader::new(bytes, ChurStatus::NonCanonicalEncoding);
         ensure!(
-            reader.u16()? == PROTOCOL_VERSION_V2,
+            reader.u16()? == PROTOCOL_VERSION_V1,
             UnsupportedVersion,
             "collection membership version is not supported"
         );
@@ -977,8 +978,8 @@ impl CollectionMembershipRecord {
         let action_value = reader.u8()?;
         let recipient_identity_vault_id = reader.id()?;
         let recipient_device_id = reader.id()?;
-        let recipient_signing_public_key = reader.fixed::<VERIFY_LEN>()?;
-        let recipient_hpke_public_key = reader.fixed::<RECIPIENT_LEN>()?;
+        let recipient_signing_public_key = reader.fixed::<PUBLIC_KEY_LEN>()?;
+        let recipient_hpke_public_key = reader.fixed::<PUBLIC_KEY_LEN>()?;
         let permission = reader.u8()?;
         let action = CollectionMembershipAction::decode(action_value, permission)?;
         let collection_epoch = reader.u64()?;
@@ -1008,8 +1009,8 @@ impl CollectionMembershipRecord {
     }
 
     /// Verifies the issuer signature.
-    pub fn verify_signature(&self, key: &[u8; VERIFY_LEN]) -> Result<()> {
-        verify_device_signature(key, &self.issuer_signature, &self.signing_bytes())
+    pub fn verify_signature(&self, key: &[u8; PUBLIC_KEY_LEN]) -> Result<()> {
+        verify_ed25519(key, &self.issuer_signature, &self.signing_bytes())
     }
 
     /// The membership-chain head after this record.
@@ -1062,13 +1063,13 @@ impl CollectionMembershipRecord {
 
     /// Recipient signing public key.
     #[must_use]
-    pub const fn recipient_signing_public_key(&self) -> &[u8; VERIFY_LEN] {
+    pub const fn recipient_signing_public_key(&self) -> &[u8; PUBLIC_KEY_LEN] {
         &self.recipient_signing_public_key
     }
 
     /// Recipient HPKE public key.
     #[must_use]
-    pub const fn recipient_hpke_public_key(&self) -> &[u8; RECIPIENT_LEN] {
+    pub const fn recipient_hpke_public_key(&self) -> &[u8; PUBLIC_KEY_LEN] {
         &self.recipient_hpke_public_key
     }
 
@@ -1114,8 +1115,8 @@ impl CollectionMembershipRecord {
         action: CollectionMembershipAction,
         recipient_identity_vault_id: Id,
         recipient_device_id: Id,
-        recipient_signing_public_key: [u8; VERIFY_LEN],
-        recipient_hpke_public_key: [u8; RECIPIENT_LEN],
+        recipient_signing_public_key: [u8; PUBLIC_KEY_LEN],
+        recipient_hpke_public_key: [u8; PUBLIC_KEY_LEN],
         collection_epoch: u64,
         issuer_identity_vault_id: Id,
         issuer_device_id: Id,
@@ -1151,10 +1152,10 @@ impl CollectionMembershipRecord {
             "collection member belongs to the source vault"
         );
         ensure!(
-            self.recipient_signing_public_key != [0; VERIFY_LEN]
-                && validate_recipient(&self.recipient_hpke_public_key).is_ok(),
+            self.recipient_signing_public_key != [0; PUBLIC_KEY_LEN]
+                && self.recipient_hpke_public_key != [0; PUBLIC_KEY_LEN],
             NonCanonicalEncoding,
-            "collection member public key is invalid"
+            "collection member public key is zero"
         );
         validate_counter(
             self.collection_membership_generation,
@@ -1182,9 +1183,7 @@ impl CollectionMembershipRecord {
 
     fn signing_bytes(&self) -> Vec<u8> {
         let encoded = self.encode();
-        let mut bytes = Vec::with_capacity(
-            tag::SHARING_COLLECTION_MEMBERSHIP.len() + Self::LEN - SIGNATURE_LEN,
-        );
+        let mut bytes = Vec::with_capacity(tag::SHARING_COLLECTION_MEMBERSHIP.len() + 228);
         bytes.extend_from_slice(tag::SHARING_COLLECTION_MEMBERSHIP);
         bytes.extend_from_slice(&encoded[..Self::LEN - SIGNATURE_LEN]);
         bytes
@@ -1212,14 +1211,6 @@ mod tests {
         Id::new([byte; 16]).expect("id")
     }
 
-    fn verification_key(seed: u8) -> [u8; VERIFY_LEN] {
-        DeviceSigningKey::from_seed([seed; 32]).verifying_key()
-    }
-
-    fn recipient_key(seed: u8) -> [u8; RECIPIENT_LEN] {
-        chur_crypto::post_quantum::recipient_public(&Key::new([seed; 32])).expect("recipient key")
-    }
-
     #[test]
     fn an_upsert_is_one_signed_canonical_record() {
         let signer = DeviceSigningKey::from_seed([12; 32]);
@@ -1231,8 +1222,8 @@ mod tests {
             CollectionMembershipAction::Upsert(PermissionProfile::Contribute),
             id(3),
             id(4),
-            verification_key(5),
-            recipient_key(6),
+            [5; 32],
+            [6; 32],
             1,
             id(1),
             id(7),
@@ -1242,7 +1233,7 @@ mod tests {
         .expect("record")
         .sign(&signer);
 
-        assert_eq!(record.encode().len(), 6641);
+        assert_eq!(record.encode().len(), CollectionMembershipRecord::LEN);
         record
             .verify_signature(&signer.verifying_key())
             .expect("signature");
@@ -1266,8 +1257,8 @@ mod tests {
             CollectionMembershipAction::Upsert(PermissionProfile::Contribute),
             id(3),
             id(4),
-            verification_key(5),
-            recipient_key(6),
+            [5; 32],
+            [6; 32],
             1,
             id(1),
             id(7),
@@ -1286,7 +1277,7 @@ mod tests {
         assert!(CollectionMembershipRecord::decode(&revoke_with_permission).is_err());
 
         let mut modified_signature = record.encode();
-        modified_signature[CollectionMembershipRecord::LEN - SIGNATURE_LEN] ^= 1;
+        modified_signature[228] ^= 1;
         let modified = CollectionMembershipRecord::decode(&modified_signature).expect("record");
         assert!(modified.verify_signature(&signer.verifying_key()).is_err());
     }
@@ -1295,7 +1286,7 @@ mod tests {
     fn the_source_adds_one_recipient_with_cumulative_permissions() {
         let source_key = DeviceSigningKey::from_seed([1; 32]);
         let source_enrollment =
-            EnrollmentRecord::initial(id(1), id(2), source_key.verifying_key(), recipient_key(3))
+            EnrollmentRecord::initial(id(1), id(2), source_key.verifying_key(), [3; 32])
                 .expect("source enrollment")
                 .sign(&source_key);
         let source_membership =
@@ -1310,8 +1301,8 @@ mod tests {
             CollectionMembershipAction::Upsert(PermissionProfile::Contribute),
             recipient_vault_id,
             recipient_device_id,
-            verification_key(7),
-            recipient_key(8),
+            [7; 32],
+            [8; 32],
             1,
             id(1),
             id(2),
@@ -1346,7 +1337,7 @@ mod tests {
     fn a_member_record_follows_a_source_rotation_the_recipient_never_observed() {
         let source_key = DeviceSigningKey::from_seed([1; 32]);
         let source_enrollment =
-            EnrollmentRecord::initial(id(1), id(2), source_key.verifying_key(), recipient_key(3))
+            EnrollmentRecord::initial(id(1), id(2), source_key.verifying_key(), [3; 32])
                 .expect("source enrollment")
                 .sign(&source_key);
         let source_membership =
@@ -1361,8 +1352,8 @@ mod tests {
             CollectionMembershipAction::Upsert(PermissionProfile::Read),
             id(4),
             id(5),
-            verification_key(7),
-            recipient_key(8),
+            [7; 32],
+            [8; 32],
             3,
             id(1),
             id(2),
@@ -1387,8 +1378,8 @@ mod tests {
             CollectionMembershipAction::Upsert(PermissionProfile::Contribute),
             id(4),
             id(5),
-            verification_key(7),
-            recipient_key(8),
+            [7; 32],
+            [8; 32],
             5,
             id(1),
             id(2),
@@ -1414,8 +1405,8 @@ mod tests {
             CollectionMembershipAction::Revoke,
             id(4),
             id(5),
-            verification_key(7),
-            recipient_key(8),
+            [7; 32],
+            [8; 32],
             6,
             id(1),
             id(2),
@@ -1438,8 +1429,8 @@ mod tests {
             CollectionMembershipAction::Upsert(PermissionProfile::Read),
             id(4),
             id(12),
-            verification_key(13),
-            recipient_key(14),
+            [13; 32],
+            [14; 32],
             5,
             id(1),
             id(2),
@@ -1456,7 +1447,7 @@ mod tests {
     fn active_external_recipient_limit_is_enforced() {
         let source_key = DeviceSigningKey::from_seed([1; 32]);
         let source_enrollment =
-            EnrollmentRecord::initial(id(1), id(2), source_key.verifying_key(), recipient_key(3))
+            EnrollmentRecord::initial(id(1), id(2), source_key.verifying_key(), [3; 32])
                 .expect("source enrollment")
                 .sign(&source_key);
         let source_membership =
@@ -1474,8 +1465,8 @@ mod tests {
                 CollectionMembershipAction::Upsert(PermissionProfile::Read),
                 Id::new(vault).expect("recipient vault"),
                 id(5),
-                verification_key(7),
-                recipient_key(8),
+                [7; 32],
+                [8; 32],
                 1,
                 id(1),
                 id(2),
@@ -1503,7 +1494,7 @@ mod tests {
     fn a_grant_must_match_current_sender_and_recipient_membership() {
         let source_key = DeviceSigningKey::from_seed([1; 32]);
         let source_enrollment =
-            EnrollmentRecord::initial(id(1), id(2), source_key.verifying_key(), recipient_key(3))
+            EnrollmentRecord::initial(id(1), id(2), source_key.verifying_key(), [3; 32])
                 .expect("source enrollment")
                 .sign(&source_key);
         let source_membership =
@@ -1560,7 +1551,7 @@ mod tests {
     fn key_substitution_blocks_until_verification_and_revoke_advances_epoch() {
         let source_key = DeviceSigningKey::from_seed([1; 32]);
         let source_enrollment =
-            EnrollmentRecord::initial(id(1), id(2), source_key.verifying_key(), recipient_key(3))
+            EnrollmentRecord::initial(id(1), id(2), source_key.verifying_key(), [3; 32])
                 .expect("source enrollment")
                 .sign(&source_key);
         let source_membership =
@@ -1575,8 +1566,8 @@ mod tests {
             CollectionMembershipAction::Upsert(PermissionProfile::Read),
             recipient_vault_id,
             recipient_device_id,
-            verification_key(7),
-            recipient_key(8),
+            [7; 32],
+            [8; 32],
             1,
             id(1),
             id(2),
@@ -1605,8 +1596,8 @@ mod tests {
             CollectionMembershipAction::Upsert(PermissionProfile::Contribute),
             recipient_vault_id,
             recipient_device_id,
-            verification_key(10),
-            recipient_key(11),
+            [10; 32],
+            [11; 32],
             1,
             id(1),
             id(2),
@@ -1617,12 +1608,7 @@ mod tests {
         .sign(&source_key);
         assert!(state.accept(&replacement, &source_membership).is_err());
         state
-            .verify_recipient_keys(
-                recipient_vault_id,
-                recipient_device_id,
-                verification_key(10),
-                recipient_key(11),
-            )
+            .verify_recipient_keys(recipient_vault_id, recipient_device_id, [10; 32], [11; 32])
             .expect("verify replacement");
         state
             .accept(&replacement, &source_membership)
@@ -1636,8 +1622,8 @@ mod tests {
             CollectionMembershipAction::Revoke,
             recipient_vault_id,
             recipient_device_id,
-            verification_key(10),
-            recipient_key(11),
+            [10; 32],
+            [11; 32],
             2,
             id(1),
             id(2),
@@ -1667,12 +1653,7 @@ mod tests {
             .restore_accepted(&first, &source_key.verifying_key())
             .expect("restore first");
         restored
-            .verify_recipient_keys(
-                recipient_vault_id,
-                recipient_device_id,
-                verification_key(10),
-                recipient_key(11),
-            )
+            .verify_recipient_keys(recipient_vault_id, recipient_device_id, [10; 32], [11; 32])
             .expect("restore verified pin");
         restored
             .restore_accepted(&replacement, &source_key.verifying_key())
@@ -1703,14 +1684,14 @@ mod tests {
     fn only_a_member_manager_can_change_membership_and_issue_grants() {
         let source_key = DeviceSigningKey::from_seed([1; 32]);
         let source_enrollment =
-            EnrollmentRecord::initial(id(1), id(2), source_key.verifying_key(), recipient_key(3))
+            EnrollmentRecord::initial(id(1), id(2), source_key.verifying_key(), [3; 32])
                 .expect("source enrollment")
                 .sign(&source_key);
         let source_membership =
             MembershipState::bootstrap(&source_enrollment).expect("source membership");
         let manager_key = DeviceSigningKey::from_seed([4; 32]);
         let manager_enrollment =
-            EnrollmentRecord::initial(id(5), id(6), manager_key.verifying_key(), recipient_key(7))
+            EnrollmentRecord::initial(id(5), id(6), manager_key.verifying_key(), [7; 32])
                 .expect("manager enrollment")
                 .sign(&manager_key);
         let manager_membership =
@@ -1724,7 +1705,7 @@ mod tests {
             id(5),
             id(6),
             manager_key.verifying_key(),
-            recipient_key(7),
+            [7; 32],
             1,
             id(1),
             id(2),
@@ -1745,8 +1726,8 @@ mod tests {
             CollectionMembershipAction::Upsert(PermissionProfile::Read),
             id(10),
             id(11),
-            verification_key(12),
-            recipient_key(13),
+            [12; 32],
+            [13; 32],
             1,
             id(5),
             id(6),
@@ -1803,7 +1784,7 @@ mod tests {
             2,
             id(10),
             id(11),
-            &recipient_key(13),
+            &[13; 32],
             id(6),
             PermissionProfile::Read,
             1,
@@ -1858,20 +1839,16 @@ mod tests {
     fn read_cannot_author_content_but_contribute_can() {
         let source_key = DeviceSigningKey::from_seed([1; 32]);
         let source_enrollment =
-            EnrollmentRecord::initial(id(1), id(2), source_key.verifying_key(), recipient_key(3))
+            EnrollmentRecord::initial(id(1), id(2), source_key.verifying_key(), [3; 32])
                 .expect("source enrollment")
                 .sign(&source_key);
         let source_membership =
             MembershipState::bootstrap(&source_enrollment).expect("source membership");
-        let recipient_signer = DeviceSigningKey::from_seed([4; 32]);
-        let recipient_enrollment = EnrollmentRecord::initial(
-            id(5),
-            id(6),
-            recipient_signer.verifying_key(),
-            recipient_key(7),
-        )
-        .expect("recipient enrollment")
-        .sign(&recipient_signer);
+        let recipient_key = DeviceSigningKey::from_seed([4; 32]);
+        let recipient_enrollment =
+            EnrollmentRecord::initial(id(5), id(6), recipient_key.verifying_key(), [7; 32])
+                .expect("recipient enrollment")
+                .sign(&recipient_key);
         let recipient_membership =
             MembershipState::bootstrap(&recipient_enrollment).expect("recipient membership");
         let first = CollectionMembershipRecord::new(
@@ -1882,8 +1859,8 @@ mod tests {
             CollectionMembershipAction::Upsert(PermissionProfile::Read),
             id(5),
             id(6),
-            recipient_signer.verifying_key(),
-            recipient_key(7),
+            recipient_key.verifying_key(),
+            [7; 32],
             1,
             id(1),
             id(2),
@@ -1918,7 +1895,7 @@ mod tests {
             &payload.encode(),
         )
         .expect("operation")
-        .sign(&recipient_signer);
+        .sign(&recipient_key);
 
         assert!(
             state
@@ -1933,8 +1910,8 @@ mod tests {
             CollectionMembershipAction::Upsert(PermissionProfile::Contribute),
             id(5),
             id(6),
-            recipient_signer.verifying_key(),
-            recipient_key(7),
+            recipient_key.verifying_key(),
+            [7; 32],
             1,
             id(1),
             id(2),

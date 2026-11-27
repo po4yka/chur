@@ -129,13 +129,12 @@ typedef int32_t chur_status_t;
  * Build-flavor bits, returned by chur_build_flavor().
  *
  * A release application refuses a library with CHUR_FLAVOR_DEBUG_ASSERTIONS or
- * CHUR_FLAVOR_TEST_HOOKS or CHUR_FLAVOR_INTERNAL_PQ set.
+ * CHUR_FLAVOR_TEST_HOOKS set.
  * ---------------------------------------------------------------------- */
 
 #define CHUR_FLAVOR_RELEASE (UINT32_C(1) << 0)
 #define CHUR_FLAVOR_DEBUG_ASSERTIONS (UINT32_C(1) << 1)
 #define CHUR_FLAVOR_TEST_HOOKS (UINT32_C(1) << 2)
-#define CHUR_FLAVOR_INTERNAL_PQ (UINT32_C(1) << 3)
 
 /* -------------------------------------------------------------------------
  * Panic containment fallbacks

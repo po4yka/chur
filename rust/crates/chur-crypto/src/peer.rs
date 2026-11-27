@@ -1,120 +1,61 @@
-//! Ephemeral X-Wing recipient and invitation-bound keys for direct peer sessions.
+//! Direction-separated keys for ephemeral direct peer sessions.
+//!
+//! Version 2 mixes a fresh X25519 shared secret into the invitation secret, so
+//! later disclosure of the invitation does not decrypt recorded traffic.
 use crate::kdf::{self, Context, Label};
-use crate::post_quantum::{ENVELOPE_LEN, RECIPIENT_LEN, open_key, recipient_public, seal_key};
 use crate::{Key, random};
 use chur_core::{ChurStatus, Error, Result, ensure};
 use sha2::{Digest, Sha256};
+use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
-/// The wire magic fixes the suite for this internal protocol.
-pub const MAGIC: &[u8; 8] = b"CHURP2P3";
-/// The connector sends the first flight and proves device membership first.
-pub const INITIATOR: u8 = 1;
-/// The listener sends the second flight and proves device membership second.
-pub const LISTENER: u8 = 0;
-const HEADER_LEN: usize = MAGIC.len() + 1 + 32;
-/// Version, role, challenge and one ephemeral X-Wing public key.
-pub const OFFER_LEN: usize = HEADER_LEN + RECIPIENT_LEN;
-/// Version, role, challenge and one HPKE envelope for the listener's random key.
-pub const REPLY_LEN: usize = HEADER_LEN + ENVELOPE_LEN;
-const INFO: &[u8] = b"CHUR\0P2P\0HANDSHAKE\0V3";
+/// Length of one version-2 peer hello: magic, challenge, and ephemeral public key.
+pub const HELLO_LEN: usize = 72;
 
-/// Check incoming magic and role as soon as their bytes arrive.
-pub fn check_prefix(input: &[u8], role: u8) -> Result<()> {
-    if let Some(magic) = input.get(..MAGIC.len()) {
-        ensure!(
-            !magic.starts_with(b"CHURP2P") || magic == MAGIC,
-            UnsupportedVersion,
-            "the peer at this address uses an unsupported peer protocol version"
-        );
-        ensure!(
-            magic == MAGIC,
-            AuthenticationFailed,
-            "peer protocol differs"
-        );
-    }
-    if let Some(received) = input.get(MAGIC.len()) {
-        ensure!(
-            *received == role,
-            AuthenticationFailed,
-            "incorrect peer role"
-        );
-    }
-    Ok(())
-}
+/// One fresh X25519 key pair for exactly one handshake.
+pub struct EphemeralKey(StaticSecret);
 
-fn header(role: u8) -> Result<[u8; HEADER_LEN]> {
-    let mut result = [0; HEADER_LEN];
-    result[..8].copy_from_slice(MAGIC);
-    result[8] = role;
-    random::fill(&mut result[9..])?;
-    Ok(result)
-}
-
-fn aad(offer: &[u8; OFFER_LEN], reply: &[u8; REPLY_LEN]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(OFFER_LEN + HEADER_LEN);
-    bytes.extend_from_slice(offer);
-    bytes.extend_from_slice(&reply[..HEADER_LEN]);
-    bytes
-}
-
-fn transcript(offer: &[u8; OFFER_LEN], reply: &[u8; REPLY_LEN]) -> [u8; 32] {
-    let mut hash = Sha256::new();
-    hash.update(b"CHUR\0P2P\0TRANSCRIPT\0V3");
-    hash.update(offer);
-    hash.update(reply);
-    hash.finalize().into()
-}
-
-/// The initiator holds this key until it receives one listener reply.
-pub struct Offer {
-    seed: Key,
-    bytes: [u8; OFFER_LEN],
-}
-
-impl Offer {
-    /// Generate an ephemeral recipient and an independent public challenge.
+impl EphemeralKey {
+    /// Generates a key pair from the OS CSPRNG.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the operating-system CSPRNG fails.
     pub fn generate() -> Result<Self> {
-        let seed = random::secret()?;
-        let mut bytes = [0; OFFER_LEN];
-        bytes[..HEADER_LEN].copy_from_slice(&header(INITIATOR)?);
-        bytes[HEADER_LEN..].copy_from_slice(&recipient_public(&seed)?);
-        Ok(Self { seed, bytes })
+        // The seed is generated in a wiped buffer, and `StaticSecret` wipes its bytes
+        // on drop. Its constructor takes the bytes by value, so only that argument
+        // temporary is not wiped; no named copy of the seed remains.
+        let seed = random::secret::<32>()?;
+        Ok(Self(StaticSecret::from(*seed.expose())))
     }
 
-    /// Public first flight.
+    /// The public key carried in the hello.
     #[must_use]
-    pub const fn bytes(&self) -> &[u8; OFFER_LEN] {
-        &self.bytes
+    pub fn public_key(&self) -> [u8; 32] {
+        PublicKey::from(&self.0).to_bytes()
     }
 
-    /// Open the response and discard the ephemeral private seed.
-    pub fn finish(self, invitation: &Key, reply: &[u8; REPLY_LEN]) -> Result<SessionKeys> {
-        check_prefix(reply, LISTENER)?;
-        let envelope = reply[HEADER_LEN..]
-            .try_into()
-            .map_err(|_| Error::new(ChurStatus::InvalidInput, "invalid peer reply"))?;
-        let shared = open_key(&self.seed, INFO, &aad(&self.bytes, reply), envelope)?;
-        session_keys(invitation, &shared, &transcript(&self.bytes, reply))
+    /// Computes the shared secret and consumes the private key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ChurStatus::AuthenticationFailed`] for a low-order remote key,
+    /// which would make the shared secret independent of the local key.
+    pub fn agree(self, remote: &[u8; 32]) -> Result<Key> {
+        let shared = self.0.diffie_hellman(&PublicKey::from(*remote));
+        ensure!(
+            shared.was_contributory(),
+            AuthenticationFailed,
+            "peer ephemeral key is invalid"
+        );
+        // Copy into the wiped key buffer directly; `shared` is wiped on drop.
+        let mut key = Key::zeroed();
+        key.expose_mut().copy_from_slice(shared.as_bytes());
+        Ok(key)
     }
 }
 
-/// Encapsulate fresh key material to the initiator and derive the listener's session.
-pub fn answer(invitation: &Key, offer: &[u8; OFFER_LEN]) -> Result<([u8; REPLY_LEN], SessionKeys)> {
-    check_prefix(offer, INITIATOR)?;
-    let recipient = offer[HEADER_LEN..]
-        .try_into()
-        .map_err(|_| Error::new(ChurStatus::InvalidInput, "invalid peer offer"))?;
-    let shared = random::secret()?;
-    let mut reply = [0; REPLY_LEN];
-    reply[..HEADER_LEN].copy_from_slice(&header(LISTENER)?);
-    let envelope = seal_key(recipient, INFO, &aad(offer, &reply), &shared)?;
-    reply[HEADER_LEN..].copy_from_slice(&envelope);
-    let keys = session_keys(invitation, &shared, &transcript(offer, &reply))?;
-    Ok((reply, keys))
-}
-
-/// The keys and public transcript of a single peer session.
+/// The keys of one version-2 peer session.
 pub struct SessionKeys {
     /// Initiator-to-listener direction key.
     pub initiator: Key,
@@ -122,18 +63,34 @@ pub struct SessionKeys {
     pub listener: Key,
     /// Session value that each device signature covers.
     pub binding: Key,
-    /// Digest of the ordered, role-tagged flights.
-    pub transcript: [u8; 32],
+}
+
+/// Hashes both complete hellos in initiator, listener order.
+///
+/// # Errors
+///
+/// Returns [`ChurStatus::InvalidInput`] when a hello has the wrong length.
+pub fn transcript(initiator: &[u8], listener: &[u8]) -> Result<[u8; 32]> {
+    ensure!(
+        initiator.len() == HELLO_LEN && listener.len() == HELLO_LEN,
+        InvalidInput,
+        "peer hello is invalid"
+    );
+    let mut hash = Sha256::new();
+    hash.update(b"CHUR\0P2P\0TRANSCRIPT\0V2");
+    hash.update(initiator);
+    hash.update(listener);
+    Ok(hash.finalize().into())
 }
 
 /// Derives both direction keys and the signature binding from the invitation
-/// secret, the fresh listener secret, and the transcript hash.
+/// secret, the X25519 shared secret, and the transcript hash.
 ///
 /// # Errors
 ///
 /// Returns [`ChurStatus::InternalFailure`] if HKDF rejects the output length.
-fn session_keys(secret: &Key, shared: &Key, transcript: &[u8; 32]) -> Result<SessionKeys> {
-    // PeerHandshakeSecret: the invitation secret, then the fresh listener secret.
+pub fn session_keys(secret: &Key, shared: &Key, transcript: &[u8; 32]) -> Result<SessionKeys> {
+    // PeerHandshakeSecret: the invitation secret, then the X25519 shared secret.
     let mut input = Zeroizing::new([0u8; 64]);
     input[..32].copy_from_slice(secret.expose());
     input[32..].copy_from_slice(shared.expose());
@@ -145,7 +102,6 @@ fn session_keys(secret: &Key, shared: &Key, transcript: &[u8; 32]) -> Result<Ses
         )
     };
     Ok(SessionKeys {
-        transcript: *transcript,
         initiator: derive(1)?,
         listener: derive(0)?,
         binding: kdf::derive(
@@ -176,50 +132,19 @@ mod tests {
     }
 
     #[test]
-    fn independent_go_listener_reply_and_all_session_keys_match() {
-        let seed = Key::new([0x42; 32]);
-        let mut bytes = [0x11; OFFER_LEN];
-        bytes[..8].copy_from_slice(MAGIC);
-        bytes[8] = INITIATOR;
-        bytes[HEADER_LEN..].copy_from_slice(&recipient_public(&seed).unwrap());
-        let fixture = include_bytes!("../../../../test-vectors/internal-pq/peer-session.bin");
-        let (reply, expected) = fixture.split_at(REPLY_LEN);
-        let keys = Offer { seed, bytes }
-            .finish(&Key::new([0x44; 32]), reply.try_into().unwrap())
+    fn both_sides_agree_and_a_low_order_key_is_refused() {
+        let left = EphemeralKey::generate().unwrap();
+        let right = EphemeralKey::generate().unwrap();
+        let (left_public, right_public) = (left.public_key(), right.public_key());
+        assert_eq!(
+            left.agree(&right_public).unwrap().expose(),
+            right.agree(&left_public).unwrap().expose()
+        );
+        let error = EphemeralKey::generate()
+            .unwrap()
+            .agree(&[0; 32])
+            .err()
             .unwrap();
-        assert_eq!(keys.transcript, expected[..32]);
-        assert_eq!(keys.initiator.expose(), &expected[32..64]);
-        assert_eq!(keys.listener.expose(), &expected[64..96]);
-        assert_eq!(keys.binding.expose(), &expected[96..]);
-    }
-
-    #[test]
-    fn neither_flight_accepts_a_noncontributory_curve_component() {
-        let secret = Key::new([7; 32]);
-        let offer = Offer::generate().unwrap();
-        let (mut reply, _) = answer(&secret, offer.bytes()).unwrap();
-        let mut invalid = *offer.bytes();
-        invalid[OFFER_LEN - 32..].fill(0);
-        assert!(answer(&secret, &invalid).is_err());
-        let end = HEADER_LEN + crate::post_quantum::ENCAP_LEN;
-        reply[end - 32..end].fill(0);
-        assert!(offer.finish(&secret, &reply).is_err());
-    }
-
-    #[test]
-    fn reply_opens_only_for_its_offer_and_binds_both_roles_and_challenges() {
-        let secret = Key::new([7; 32]);
-        let offer = Offer::generate().unwrap();
-        let (reply, listener) = answer(&secret, offer.bytes()).unwrap();
-        assert!(Offer::generate().unwrap().finish(&secret, &reply).is_err());
-        assert!(check_prefix(&reply, INITIATOR).is_err());
-        assert!(check_prefix(offer.bytes(), LISTENER).is_err());
-        let connector = offer.finish(&secret, &reply).unwrap();
-        assert_eq!(listener.transcript, connector.transcript);
-        assert_eq!(listener.binding.expose(), connector.binding.expose());
-        let offer = Offer::generate().unwrap();
-        let (mut reply, _) = answer(&secret, offer.bytes()).unwrap();
-        reply[HEADER_LEN - 1] ^= 1;
-        assert!(offer.finish(&secret, &reply).is_err());
+        assert_eq!(error.status(), ChurStatus::AuthenticationFailed);
     }
 }

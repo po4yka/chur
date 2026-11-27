@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import dev.po4yka.chur.ffi.PAIRING_CODE_MAX_CHARS
 import dev.po4yka.chur.app.rememberSensitiveCopy
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Button
@@ -85,7 +84,8 @@ internal fun DevicePairingCard(
                 Button(onClick = onPrepare, enabled = !busy) { Text("Create pairing request") }
                 state.requestFingerprint?.let { Text("New device fingerprint: $it") }
                 state.requestCode?.let { code ->
-                    Text("Copy the request and send it to your connected device.")
+                    Text("Send this request to your connected device:")
+                    Text(code, style = MaterialTheme.typography.bodySmall)
                     TextButton(onClick = { copy("Chur pairing request", code) }) { Text("Copy request") }
                 }
                 Text("Open the encrypted approval file from your connected device then connect directly to finish pairing.")
@@ -108,7 +108,7 @@ internal fun DevicePairingCard(
                 OutlinedTextField(
                     colors = churOutlinedTextFieldColors(),
                     value = request,
-                    onValueChange = { if (it.length <= PAIRING_CODE_MAX_CHARS) request = it },
+                    onValueChange = { request = it.take(PAIRING_CODE_MAX_CHARS) },
                     label = { Text("New device pairing request") },
                     keyboardOptions = privateKeyboardOptions(),
                     modifier = Modifier.fillMaxWidth(),
@@ -139,3 +139,6 @@ internal fun DevicePairingCard(
         }
     }
 }
+
+/** Bounds pasted public codes before native canonical decoding. */
+internal const val PAIRING_CODE_MAX_CHARS = 1_024

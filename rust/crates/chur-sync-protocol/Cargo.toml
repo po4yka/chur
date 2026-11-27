@@ -14,12 +14,10 @@ test-vectors = []
 chur-core.workspace = true
 chur-crypto.workspace = true
 chur-format.workspace = true
+ed25519-dalek.workspace = true
 hpke.workspace = true
+x25519-dalek.workspace = true
 zeroize.workspace = true
-
-[dev-dependencies]
-hex.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true

@@ -27,7 +27,9 @@ Files, private notes, selective archives, external encryption, OCR, public camer
 
 ## Internal post-quantum profile
 
-The native handshake identifies the experimental profile. A release application stops before it opens a vault that uses this build. To change this decision, record the final hybrid HPKE specification, the provider version and the interoperability test results for that version. An external cryptographic audit is optional for this profile. On physical Android and iPhone devices, confirm enrollment in both directions, grant exchange, history synchronization, revocation, backup recovery and incoming shares. Record cold and warm latency, peak memory, installed size and the size of the verification payload. Include the minimum supported OS versions. [Profile and dependencies](../adr/0073-internal-post-quantum-profile.md)
+The ordinary Android and iOS release uses native ABI 7.4. Verify its startup and historical vault access with the ordinary release artifacts and the [classical vault fixture](../../test-vectors/compatibility/classical-vault/README.md). Record each platform result separately. The isolated internal applications use native ABI 8.4, the internal flavor bit and a distinct application ID. They require a new vault.
+
+Before a public PQ profile is frozen, record the final hybrid HPKE specification and its errata, the exact cryptographic dependencies and the results from independent vectors for those versions. On physical Android and iPhone devices, test enrollment in both directions, grant exchange, history delivery, revocation, backup recovery and iOS incoming shares. Include the minimum supported OS versions. Measure cold and warm latency, memory, installed size and verification payload size. An external cryptographic audit is optional for this profile. The maintainer records its status and the evidence for any public claim. [Internal build](../../DEVELOPMENT.md#internal-post-quantum-build) · [Prototype evidence and open device checks](../adr/0073-internal-post-quantum-profile.md#prototype-verification)
 
 ## Gate 0 — design prototype
 

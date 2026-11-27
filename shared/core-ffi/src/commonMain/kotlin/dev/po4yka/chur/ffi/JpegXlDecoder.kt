@@ -40,8 +40,8 @@ internal fun jpegXlDimensions(width: Int, height: Int, maxEdge: Int): Pair<Int, 
 }
 
 internal fun requireJpegXlCapability() {
-    if (ChurNative.abiVersionMajor() != 8 || ChurNative.abiVersionMinor() < 1 ||
+    if (ChurNative.abiVersionMajor() != 7 || ChurNative.abiVersionMinor() < 1 ||
         ChurNative.capabilities() and (1L shl 9) == 0L) {
-        throw ChurFailure(dev.po4yka.chur.core.model.ChurStatus.ABI_INCOMPATIBLE, "portable JPEG XL requires ABI 8.1")
+        throw ChurFailure(dev.po4yka.chur.core.model.ChurStatus.ABI_INCOMPATIBLE, "portable JPEG XL requires ABI 7.1")
     }
 }

@@ -16,7 +16,7 @@ import kotlin.test.assertTrue
  */
 class AbiGateTest {
     private fun handshake(
-        major: UInt = 8u,
+        major: UInt = 7u,
         minor: UInt = REQUIRED_ABI_MINOR,
         capabilities: ULong = 0u,
         objectMin: UInt = 1u,
@@ -34,16 +34,8 @@ class AbiGateTest {
     }
 
     @Test
-    fun prototype_library_is_available_only_to_an_internal_application() {
-        val prototype = handshake(flavor = FLAVOR_RELEASE or FLAVOR_INTERNAL_PQ)
-        assertIs<GateResult.Compatible>(gate(prototype, releaseApplication = false))
-        val refusal = assertIs<GateResult.Incompatible>(gate(prototype, releaseApplication = true))
-        assertEquals(GateResult.Reason.BUILD_FLAVOR, refusal.reason)
-    }
-
-    @Test
     fun another_major_version_is_refused_terminally() {
-        for (major in listOf(0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, UInt.MAX_VALUE)) {
+        for (major in listOf(0u, 1u, 2u, 3u, 4u, 5u, 6u, UInt.MAX_VALUE)) {
             val result = gate(handshake(major = major), releaseApplication = true)
             assertIs<GateResult.Incompatible>(result)
             assertEquals(ChurStatus.ABI_INCOMPATIBLE, result.status)

@@ -1,2 +1,5 @@
 # Preserve the bytes and cross-reference padding of binary PDF test fixtures.
 apps/androidApp/src/androidTest/assets/ocr/*.pdf binary
+
+# Unified diffs use one space for an empty context line.
+experiments/internal-pq/*.patch whitespace=-blank-at-eol,-space-before-tab

@@ -5,29 +5,29 @@ use chur_core::limits::NONCE_LEN;
 use chur_core::{ChurStatus, Error, Id, Result, ensure};
 use chur_crypto::aead::{self, Nonce};
 use chur_crypto::kdf::{self, Context, Label};
-use chur_crypto::post_quantum::{self, RECIPIENT_LEN, VERIFY_LEN};
 use chur_crypto::secret::Key;
 use chur_crypto::tuple::{Tuple, tag};
 use chur_crypto::{commit, random};
 use chur_format::codec::{Reader, Writer};
+use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
 use crate::membership::EnrollmentRecord;
-use crate::operation::{DeviceSigningKey, PROTOCOL_VERSION_V2};
+use crate::operation::{DeviceSigningKey, PROTOCOL_VERSION_V1};
 
 const HEX: &[u8; 16] = b"0123456789abcdef";
 const ENCODING_PROFILE_V1: u16 = 1;
-pub(crate) const SIGNING_SUITE_V2: u16 = 2;
-pub(crate) const HPKE_SUITE_V2: u16 = 2;
+const SIGNING_SUITE_V1: u16 = 1;
+const HPKE_SUITE_V1: u16 = 1;
 const PRIVATE_IDENTITY_LEN: usize = 64;
 const WRAPPED_IDENTITY_LEN: usize = PRIVATE_IDENTITY_LEN + 16;
 const LOCAL_IDENTITY: bool = false;
 const RECOVERY_ONLY: bool = true;
 
-/// One portable ML-DSA-65 and X-Wing device identity.
+/// One portable Ed25519 and X25519 device identity.
 pub struct DeviceIdentity {
     signing_key: DeviceSigningKey,
-    hpke_secret: Key,
+    hpke_secret: StaticSecret,
 }
 
 impl DeviceIdentity {
@@ -50,24 +50,20 @@ impl DeviceIdentity {
     pub fn from_seeds(signing_seed: [u8; 32], hpke_secret: [u8; 32]) -> Self {
         Self {
             signing_key: DeviceSigningKey::from_seed(signing_seed),
-            hpke_secret: Key::new(hpke_secret),
+            hpke_secret: StaticSecret::from(hpke_secret),
         }
     }
 
-    /// The ML-DSA-65 public verification key.
+    /// The Ed25519 public verification key.
     #[must_use]
-    pub fn signing_public_key(&self) -> [u8; VERIFY_LEN] {
+    pub fn signing_public_key(&self) -> [u8; 32] {
         self.signing_key.verifying_key()
     }
 
-    /// The X-Wing public key used by enrollment and grants.
+    /// The X25519 public key used by enrollment and grants.
     #[must_use]
-    pub fn hpke_public_key(&self) -> [u8; RECIPIENT_LEN] {
-        #[expect(
-            clippy::expect_used,
-            reason = "X-Wing accepts every 32-byte private seed"
-        )]
-        post_quantum::recipient_public(&self.hpke_secret).expect("fixed-length X-Wing seed")
+    pub fn hpke_public_key(&self) -> [u8; 32] {
+        PublicKey::from(&self.hpke_secret).to_bytes()
     }
 
     /// The key for ordinary operation and membership authoring.
@@ -77,14 +73,14 @@ impl DeviceIdentity {
     }
 
     pub(crate) fn hpke_secret_bytes(&self) -> &[u8; 32] {
-        self.hpke_secret.expose()
+        self.hpke_secret.as_bytes()
     }
 
     fn secret_bytes(&self) -> Zeroizing<[u8; PRIVATE_IDENTITY_LEN]> {
         let signing_seed = self.signing_key.seed_bytes();
         let mut bytes = Zeroizing::new([0; PRIVATE_IDENTITY_LEN]);
         bytes[..32].copy_from_slice(signing_seed.as_ref());
-        bytes[32..].copy_from_slice(self.hpke_secret.expose());
+        bytes[32..].copy_from_slice(self.hpke_secret.as_bytes());
         bytes
     }
 }
@@ -125,15 +121,15 @@ impl RecoveredDeviceIdentity {
         Ok(enrollment.sign(&self.identity.signing_key))
     }
 
-    /// The recovered ML-DSA-65 public verification key.
+    /// The recovered Ed25519 public verification key.
     #[must_use]
-    pub fn signing_public_key(&self) -> [u8; VERIFY_LEN] {
+    pub fn signing_public_key(&self) -> [u8; 32] {
         self.identity.signing_public_key()
     }
 
-    /// The recovered X-Wing public key.
+    /// The recovered X25519 public key.
     #[must_use]
-    pub fn hpke_public_key(&self) -> [u8; RECIPIENT_LEN] {
+    pub fn hpke_public_key(&self) -> [u8; 32] {
         self.identity.hpke_public_key()
     }
 
@@ -304,10 +300,10 @@ impl DeviceIdentityEnvelope {
     pub fn encode(&self) -> Vec<u8> {
         let mut writer = Writer::with_capacity(Self::LEN);
         writer
-            .u16(PROTOCOL_VERSION_V2)
+            .u16(PROTOCOL_VERSION_V1)
             .u16(ENCODING_PROFILE_V1)
-            .u16(SIGNING_SUITE_V2)
-            .u16(HPKE_SUITE_V2)
+            .u16(SIGNING_SUITE_V1)
+            .u16(HPKE_SUITE_V1)
             .id(&self.vault_id)
             .id(&self.device_id)
             .u64(self.identity_generation)
@@ -332,7 +328,7 @@ impl DeviceIdentityEnvelope {
         );
         let mut reader = Reader::new(bytes, ChurStatus::NonCanonicalEncoding);
         ensure!(
-            reader.u16()? == PROTOCOL_VERSION_V2,
+            reader.u16()? == PROTOCOL_VERSION_V1,
             UnsupportedVersion,
             "device identity envelope protocol version is not supported"
         );
@@ -342,12 +338,12 @@ impl DeviceIdentityEnvelope {
             "device identity envelope encoding profile is not supported"
         );
         ensure!(
-            reader.u16()? == SIGNING_SUITE_V2,
+            reader.u16()? == SIGNING_SUITE_V1,
             UnsupportedSuite,
             "device identity signing suite is not supported"
         );
         ensure!(
-            reader.u16()? == HPKE_SUITE_V2,
+            reader.u16()? == HPKE_SUITE_V1,
             UnsupportedSuite,
             "device identity HPKE suite is not supported"
         );
@@ -418,10 +414,10 @@ fn identity_aad(
     recovery_only: bool,
 ) -> Vec<u8> {
     Tuple::new(tag::DEVICE_IDENTITY_ENVELOPE)
-        .u16(PROTOCOL_VERSION_V2)
+        .u16(PROTOCOL_VERSION_V1)
         .u16(ENCODING_PROFILE_V1)
-        .u16(SIGNING_SUITE_V2)
-        .u16(HPKE_SUITE_V2)
+        .u16(SIGNING_SUITE_V1)
+        .u16(HPKE_SUITE_V1)
         .id(vault_id)
         .id(device_id)
         .u64(identity_generation)
@@ -434,15 +430,12 @@ fn identity_aad(
 pub fn fingerprint_digest(
     vault_id: &Id,
     device_id: &Id,
-    signing_public_key: &[u8; VERIFY_LEN],
-    hpke_public_key: &[u8; RECIPIENT_LEN],
+    signing_public_key: &[u8; 32],
+    hpke_public_key: &[u8; 32],
 ) -> [u8; 32] {
     commit::commit(
         tag::IDENTITY_FINGERPRINT,
         &[
-            &PROTOCOL_VERSION_V2.to_be_bytes(),
-            &SIGNING_SUITE_V2.to_be_bytes(),
-            &HPKE_SUITE_V2.to_be_bytes(),
             vault_id.as_bytes(),
             device_id.as_bytes(),
             signing_public_key,
@@ -451,17 +444,17 @@ pub fn fingerprint_digest(
     )
 }
 
-/// Formats the portable 256-bit verification string.
+/// Formats the portable 160-bit verification string.
 #[must_use]
 pub fn fingerprint(
     vault_id: &Id,
     device_id: &Id,
-    signing_public_key: &[u8; VERIFY_LEN],
-    hpke_public_key: &[u8; RECIPIENT_LEN],
+    signing_public_key: &[u8; 32],
+    hpke_public_key: &[u8; 32],
 ) -> String {
     let digest = fingerprint_digest(vault_id, device_id, signing_public_key, hpke_public_key);
-    let mut display = String::with_capacity(79);
-    for (index, pair) in digest.chunks(2).enumerate() {
+    let mut display = String::with_capacity(49);
+    for (index, pair) in digest[..20].chunks(2).enumerate() {
         if index != 0 {
             display.push(' ');
         }
@@ -478,10 +471,15 @@ pub fn fingerprint(
 pub fn qr_identity_payload(
     vault_id: &Id,
     device_id: &Id,
-    signing_public_key: &[u8; VERIFY_LEN],
-    hpke_public_key: &[u8; RECIPIENT_LEN],
-) -> [u8; 32] {
-    fingerprint_digest(vault_id, device_id, signing_public_key, hpke_public_key)
+    signing_public_key: &[u8; 32],
+    hpke_public_key: &[u8; 32],
+) -> [u8; 96] {
+    let mut payload = [0; 96];
+    payload[..16].copy_from_slice(vault_id.as_bytes());
+    payload[16..32].copy_from_slice(device_id.as_bytes());
+    payload[32..64].copy_from_slice(signing_public_key);
+    payload[64..].copy_from_slice(hpke_public_key);
+    payload
 }
 
 #[cfg(test)]
@@ -494,26 +492,20 @@ mod tests {
     fn fingerprint_and_qr_use_the_same_identity_bytes() {
         let vault_id = Id::new([1; 16]).expect("vault");
         let device_id = Id::new([2; 16]).expect("device");
-        let signing = [3; VERIFY_LEN];
-        let hpke = [4; RECIPIENT_LEN];
+        let signing = [3; 32];
+        let hpke = [4; 32];
         let qr = qr_identity_payload(&vault_id, &device_id, &signing, &hpke);
 
-        // The fixture hashes the documented fields with the Python BLAKE3 binding.
+        assert_eq!(&qr[..16], vault_id.as_bytes());
+        assert_eq!(&qr[16..32], device_id.as_bytes());
+        assert_eq!(&qr[32..64], &signing);
+        assert_eq!(&qr[64..], &hpke);
+        let display = fingerprint(&vault_id, &device_id, &signing, &hpke);
+        assert_eq!(display.len(), 49);
+        assert_eq!(display.split(' ').count(), 10);
         assert_eq!(
-            qr,
-            [
-                0x4a, 0x1a, 0x31, 0xd1, 0xf7, 0xb5, 0xeb, 0xd5, 0xb1, 0x3f, 0xa5, 0x4f, 0x62, 0x85,
-                0xad, 0x4e, 0x8c, 0xfc, 0x84, 0xd5, 0xe5, 0x26, 0x18, 0xb9, 0x10, 0x0c, 0xa0, 0x66,
-                0x1e, 0xdc, 0xee, 0xca
-            ]
-        );
-        assert_eq!(
-            fingerprint(&vault_id, &device_id, &signing, &hpke),
-            "4a1a 31d1 f7b5 ebd5 b13f a54f 6285 ad4e 8cfc 84d5 e526 18b9 100c a066 1edc eeca"
-        );
-        assert_ne!(
-            qr,
-            qr_identity_payload(&device_id, &vault_id, &signing, &hpke)
+            fingerprint_digest(&vault_id, &device_id, &signing, &hpke),
+            commit::commit(tag::IDENTITY_FINGERPRINT, &[&qr])
         );
     }
 

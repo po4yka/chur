@@ -228,7 +228,6 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = DC6F1CF36C0FD1FAE79B32D6 /* Build configuration list for PBXNativeTarget "ChurShare" */;
 			buildPhases = (
-				E94779B1B1B5FDA6A4908465 /* Stage inbox static library */,
 				F3612FA111273F5F19BFA0FB /* Sources */,
 			);
 			buildRules = (
@@ -339,25 +338,6 @@
 			shellPath = /bin/sh;
 			shellScript = "set -euo pipefail\n\"$SRCROOT/SpiritRenderer/stage-filament.sh\"\ncd \"$SRCROOT/../..\"\ncase \"$PLATFORM_NAME\" in\n  iphonesimulator) target=IosSimulatorArm64; directory=iosSimulatorArm64; triple=aarch64-apple-ios-sim ;;\n  iphoneos) target=IosArm64; directory=iosArm64; triple=aarch64-apple-ios ;;\n  *) echo \"Unsupported Apple platform: $PLATFORM_NAME\" >&2; exit 1 ;;\nesac\ncase \"$CONFIGURATION\" in\n  Debug|Release) ;;\n  *) echo \"Unsupported configuration: $CONFIGURATION\" >&2; exit 1 ;;\nesac\n./gradlew \":shared:app:link${CONFIGURATION}Framework${target}\"\nvariant=\"$(printf '%s' \"$CONFIGURATION\" | tr '[:upper:]' '[:lower:]')Framework\"\nmkdir -p \"$DERIVED_FILE_DIR\"\nditto \"shared/app/build/bin/$directory/$variant/ChurApp.framework\" \"$DERIVED_FILE_DIR/ChurApp.framework\"\nditto \"rust/target/$triple/${variant%Framework}/libchur_ffi.a\" \"$DERIVED_FILE_DIR/libchur_ffi.a\"\n";
 		};
-		E94779B1B1B5FDA6A4908465 /* Stage inbox static library */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Stage inbox static library";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\narchive=$(\"$SRCROOT/build-inbox.sh\" \"$PLATFORM_NAME\")\nmkdir -p \"$DERIVED_FILE_DIR\"\nditto \"$archive\" \"$DERIVED_FILE_DIR/libchur_ffi.a\"\n";
-		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -464,7 +444,6 @@
 				PRODUCT_BUNDLE_IDENTIFIER = dev.po4yka.chur;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG CHUR_FILAMENT";
-				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/InboxNative";
 				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/SpiritRenderer/ChurSpirit-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -540,8 +519,6 @@
 				ARCHS = arm64;
 				CODE_SIGNING_ALLOWED = NO;
 				CODE_SIGN_ENTITLEMENTS = IncomingShare.entitlements;
-				DEAD_CODE_STRIPPING = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = ShareExtension/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -549,12 +526,9 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				OTHER_LDFLAGS = "$(inherited) $(DERIVED_FILE_DIR)/libchur_ffi.a -framework Security";
 				PRODUCT_BUNDLE_IDENTIFIER = dev.po4yka.chur.share;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CHUR_SHARE_EXTENSION";
-				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/InboxNative";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -587,8 +561,6 @@
 				ARCHS = arm64;
 				CODE_SIGNING_ALLOWED = NO;
 				CODE_SIGN_ENTITLEMENTS = IncomingShare.entitlements;
-				DEAD_CODE_STRIPPING = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = ShareExtension/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -596,12 +568,9 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				OTHER_LDFLAGS = "$(inherited) $(DERIVED_FILE_DIR)/libchur_ffi.a -framework Security";
 				PRODUCT_BUNDLE_IDENTIFIER = dev.po4yka.chur.share;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CHUR_SHARE_EXTENSION";
-				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/InboxNative";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -632,7 +601,6 @@
 				PRODUCT_BUNDLE_IDENTIFIER = dev.po4yka.chur;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CHUR_FILAMENT";
-				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/InboxNative";
 				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/SpiritRenderer/ChurSpirit-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";

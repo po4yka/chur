@@ -1,3 +1,27 @@
+//! Chur FFI boundary.
+//!
+//! The boundary splits into a structured control plane and a bounded streaming
+//! data plane, both on one stable C ABI (ADR-0006, frozen by ADR-0016). No
+//! binding generator is part of it: `include/chur.h` is hand-written and is the
+//! authority for the C side, and this crate is the authority for the Rust side.
+//!
+//! Every export contains panics. §11 of that contract is unconditional, and
+//! `panic::guard` is how it is met: a caught panic never crosses the boundary
+//! and its payload is dropped inside. A handshake export has no status channel,
+//! so it returns a value the host refuses instead, per ADR-0037.
+//!
+//! The handshake of §2 is here; the control plane and the data plane are in
+//! [`api`]. A handshake function is callable from any thread before runtime
+//! initialization and cannot fail, which is what a platform gate needs before
+//! it decides whether to load the library at all. [`chur_capabilities`] reports
+//! the capabilities that actually exist and no others.
+//!
+//! Normative sources:
+//!
+//! - `docs/interop/FFI_CONTRACT.md` (ABI handshake, handles, buffer ownership)
+//! - `docs/ERROR_MODEL.md` (`chur_status_t` and its values)
+//! - `docs/security/SECURITY_INVARIANTS.md` (SEC-050, SEC-051)
+
 pub mod api;
 pub mod content_index;
 pub mod device_pairing;
@@ -21,15 +45,16 @@ pub mod sync;
 pub fn registry_live_handles() -> usize {
     registry::live()
 }
-pub(crate) mod operation;
+mod operation;
+mod panic;
 pub mod private_notes;
 pub mod product;
-pub(crate) mod provider_io;
+mod provider_io;
 pub mod records;
 pub mod reencrypt;
-pub(crate) mod registry;
-pub(crate) mod runtime;
-pub(crate) mod unlock_throttle;
+mod registry;
+mod runtime;
+mod unlock_throttle;
 
 use chur_core::ChurStatus;
 use chur_format::constants::{CONTAINER_VERSION_V1, CONTAINER_VERSION_V2, SLOT_VERSION_V1};
@@ -40,7 +65,7 @@ use crate::panic::guard;
 ///
 /// A different major value fails loading, reports `ABI_INCOMPATIBLE`, and the
 /// library is not called again in that process.
-pub const ABI_VERSION_MAJOR: u32 = 8;
+pub const ABI_VERSION_MAJOR: u32 = 7;
 
 /// Minor component of the native API version.
 ///
@@ -84,8 +109,6 @@ pub const CHUR_FLAVOR_RELEASE: u32 = 1 << 0;
 pub const CHUR_FLAVOR_DEBUG_ASSERTIONS: u32 = 1 << 1;
 /// Build-flavor bit: test hooks are compiled in.
 pub const CHUR_FLAVOR_TEST_HOOKS: u32 = 1 << 2;
-/// Build-flavor bit: the protocol is for internal evaluation only.
-pub const CHUR_FLAVOR_INTERNAL_PQ: u32 = 1 << 3;
 
 /// The value a handshake export returns when its body panics, ADR-0037.
 ///
@@ -257,9 +280,9 @@ pub extern "C" fn chur_build_flavor() -> u32 {
         // forbids a production build that can select deterministic randomness,
         // and the crate offers no feature that would set CHUR_FLAVOR_TEST_HOOKS.
         if cfg!(debug_assertions) {
-            CHUR_FLAVOR_DEBUG_ASSERTIONS | CHUR_FLAVOR_INTERNAL_PQ
+            CHUR_FLAVOR_DEBUG_ASSERTIONS
         } else {
-            CHUR_FLAVOR_RELEASE | CHUR_FLAVOR_INTERNAL_PQ
+            CHUR_FLAVOR_RELEASE
         }
     })
 }
@@ -291,7 +314,7 @@ mod tests {
 
     #[test]
     fn the_handshake_answers_every_documented_fact() {
-        assert_eq!(chur_abi_version_major(), 8);
+        assert_eq!(chur_abi_version_major(), 7);
         assert_eq!(chur_abi_version_minor(), 4);
         assert_eq!(chur_object_format_min(), 1);
         assert_eq!(chur_object_format_max(), 2);
@@ -364,7 +387,6 @@ mod tests {
 
     #[test]
     fn the_build_flavor_never_declares_test_hooks() {
-        assert_ne!(chur_build_flavor() & CHUR_FLAVOR_INTERNAL_PQ, 0);
         assert_eq!(chur_build_flavor() & CHUR_FLAVOR_TEST_HOOKS, 0);
         let release = chur_build_flavor() & CHUR_FLAVOR_RELEASE != 0;
         let debug = chur_build_flavor() & CHUR_FLAVOR_DEBUG_ASSERTIONS != 0;

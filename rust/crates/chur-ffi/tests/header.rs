@@ -219,14 +219,9 @@ fn the_capability_bits_match() {
 #[test]
 fn the_build_flavor_bits_match() {
     let header = defines("CHUR_FLAVOR_");
-    assert_eq!(header.len(), 4);
+    assert_eq!(header.len(), 3);
     for (name, rust_value, bit) in [
         ("CHUR_FLAVOR_RELEASE", chur_ffi::CHUR_FLAVOR_RELEASE, 0),
-        (
-            "CHUR_FLAVOR_INTERNAL_PQ",
-            chur_ffi::CHUR_FLAVOR_INTERNAL_PQ,
-            3,
-        ),
         (
             "CHUR_FLAVOR_DEBUG_ASSERTIONS",
             chur_ffi::CHUR_FLAVOR_DEBUG_ASSERTIONS,
@@ -455,7 +450,7 @@ fn every_declared_function_is_exported() {
     );
 
     // Calling each one proves the list above is not a stale copy.
-    assert_eq!(chur_ffi::chur_abi_version_major(), 8);
+    assert_eq!(chur_ffi::chur_abi_version_major(), 7);
     assert_eq!(chur_ffi::chur_abi_version_minor(), 4);
     assert_eq!(
         chur_ffi::chur_capabilities(),

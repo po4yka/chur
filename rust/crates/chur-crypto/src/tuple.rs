@@ -68,7 +68,7 @@ pub mod tag {
     pub const BACKUP_RECORD_COMMITMENT: &[u8] = b"CHUR\0BACKUP\0RECORD-COMMITMENT\0V1";
     /// Operation digest and per-device chain hash.
     pub const SYNC_OPERATION_CHAIN: &[u8] = b"CHUR\0SYNC\0OPERATION-CHAIN\0V1";
-    /// Operation payload AAD and device signature input.
+    /// Operation payload AAD and Ed25519 signature input.
     pub const SYNC_OPERATION: &[u8] = b"CHUR\0SYNC\0OPERATION\0V1";
     /// Checkpoint record signature.
     pub const SYNC_CHECKPOINT: &[u8] = b"CHUR\0SYNC\0CHECKPOINT\0V1";
@@ -104,7 +104,7 @@ pub mod tag {
     pub const SHARING_GRANT_HPKE_INFO: &[u8] = b"CHUR\0SHARING\0GRANT-HPKE-INFO\0V1";
     /// Collection-grant HPKE AAD.
     pub const SHARING_GRANT_HPKE_AAD: &[u8] = b"CHUR\0SHARING\0GRANT-HPKE-AAD\0V1";
-    /// Collection-grant device signature.
+    /// Collection-grant Ed25519 signature.
     pub const SHARING_COLLECTION_GRANT: &[u8] = b"CHUR\0SHARING\0COLLECTION-GRANT\0V1";
     /// Signs one collection membership change.
     pub const SHARING_COLLECTION_MEMBERSHIP: &[u8] = b"CHUR\0SHARING\0COLLECTION-MEMBERSHIP\0V1";

@@ -37,7 +37,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                     try IncomingShareSelection.prepareScratch(self.incomingScratch)
                     self.incomingScratchReady = true
                 }
-                let inbox = try IncomingShareInbox.openForApplication()
+                let inbox = try IncomingShareInbox.open(forApplication: true)
                 if let batch = try inbox.pending().first {
                     prepared = try IncomingShareSelection(inbox: inbox, batch: batch,
                         scratch: self.incomingScratch, onExpired: { [weak self] in

@@ -42,8 +42,8 @@ pub const BACKUP_VERSION_V1: u16 = 0x0001;
 /// §15.2: `backup_version` of the package with a portable catalog export and a
 /// record commitment, ADR-0068.
 pub const BACKUP_VERSION_V2: u16 = 0x0002;
-/// Internal portable catalog with post-quantum membership columns (ADR-0073).
-pub const CATALOG_EXPORT_VERSION_INTERNAL_PQ: u16 = 0xff01;
+/// §15.2: `export_version` of `CatalogExportV1`, ADR-0068.
+pub const CATALOG_EXPORT_VERSION_V1: u16 = 0x0001;
 /// §15.2: `catalog_format_version` of the private catalog.
 pub const CATALOG_FORMAT_VERSION_V1: u16 = 0x0001;
 /// §15.2: private catalog v2 with durable encrypted-sync state.
@@ -90,8 +90,8 @@ pub const SLOT_VERSION_V1: u16 = 0x0001;
 pub const CHUNK_RECORD_PROFILE_V1: u16 = 0x0001;
 /// §15.2: `commitment_profile`, the constructions of container §5 and §10.
 pub const COMMITMENT_PROFILE_V1: u16 = 0x0001;
-/// Private prototype policy. Classical descriptors must fail before catalog access.
-pub const CRYPTO_POLICY_INTERNAL_PQ: u16 = 0xff01;
+/// §15.2: `crypto_policy_id`, suite `0x0001` for every vault-level record.
+pub const CRYPTO_POLICY_V1: u16 = 0x0001;
 /// §15.2: `naming_profile_id`, opaque random store identifiers.
 pub const NAMING_PROFILE_V1: u16 = 0x0001;
 /// §15.2: `password_profile_id`, strict UTF-8 with no normalization.

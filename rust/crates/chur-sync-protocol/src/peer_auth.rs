@@ -1,29 +1,28 @@
 //! Device authentication of one direct peer session, defined in
-//! `docs/sync/PEER_PROTOCOL_V3.md`.
+//! `docs/sync/SYNC_PROTOCOL_V1.md` §3.2.
 //!
 //! Each device signs its claimed identity, the transcript hash of both hellos,
-//! and the session binding with its enrolled ML-DSA-65 key. The binding derives
-//! from the invitation secret and the hybrid session secret, so a signature is
+//! and the session binding with its enrolled Ed25519 key. The binding derives
+//! from the invitation secret and the X25519 shared secret, so a signature is
 //! valid for exactly one session.
 
 use chur_core::{ChurStatus, Error, Id, Result, ensure};
 use chur_format::codec::{Reader, Writer};
 
 use crate::identity::DeviceIdentity;
-use crate::operation::verify_device_signature;
-use chur_crypto::post_quantum::{SIGNATURE_LEN, VERIFY_LEN};
+use crate::operation::verify_ed25519;
 
 /// Length of one encoded authentication record.
 pub const RECORD_LEN: usize = 16 + 16 + SIGNATURE_LEN;
-
-const DOMAIN: &[u8] = b"CHUR\0P2P\0AUTH\0V3";
+const SIGNATURE_LEN: usize = 64;
+const DOMAIN: &[u8] = b"CHUR\0P2P\0AUTH\0V2";
 
 /// The local signer and the enrolled devices it accepts for one session.
 pub struct PeerCredential {
     vault_id: Id,
     device_id: Id,
     identity: DeviceIdentity,
-    trusted: Vec<(Id, [u8; VERIFY_LEN])>,
+    trusted: Vec<(Id, [u8; 32])>,
 }
 
 impl PeerCredential {
@@ -34,7 +33,7 @@ impl PeerCredential {
         vault_id: Id,
         device_id: Id,
         identity: DeviceIdentity,
-        trusted: Vec<(Id, [u8; VERIFY_LEN])>,
+        trusted: Vec<(Id, [u8; 32])>,
     ) -> Self {
         Self {
             vault_id,
@@ -105,7 +104,7 @@ impl PeerCredential {
                     "peer device is revoked or unknown",
                 )
             })?;
-        verify_device_signature(
+        verify_ed25519(
             key,
             &signature,
             &message(role, &vault_id, &device_id, transcript, binding),

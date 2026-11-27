@@ -146,11 +146,7 @@ A skill synchronisation updates both hashes and the commit, and the checker is w
 - **Data and telemetry:** the crate receives in-process public/private key bytes, fixed grant context, and one collection key. It performs no application file, process, network, permission, logging, analytics, or telemetry operation. Its randomness feature reads the operating-system CSPRNG for sender encapsulation.
 - **Update and removal:** updates require RFC and Chur vectors, malformed-input tests, lockfile and advisory review, all mobile targets, and explicit protocol compatibility review. Removal requires another reviewed RFC 9180 implementation; a local construction is not an acceptable fallback.
 
-### Internal post-quantum prototype
-
-ADR-0073 authorizes the mlkem feature of rust-hpke 0.15.1 and RustCrypto ml-dsa 0.1.2 for this internal build. Cargo.lock pins ml-kem 0.3.4, x-wing 0.1.1 and module-lattice 0.2.4. Preserve the MIT or Apache-2.0 license notices. Rust owns the keys on all targets. Pure Rust implementations avoid a new native cryptography toolchain and an OS-version split at iOS 18. Apple CryptoKit and the Go standard library provide independent implementations for interoperability testing. A dependency update requires advisory, feature and license review, independent vectors and a mobile build. Disclose the audit status of the selected implementations in the profile documentation. [Decision and release conditions](adr/0073-internal-post-quantum-profile.md)
-
-## Ktor Client 3.5.2, shared sync transport
+### Ktor Client 3.5.2, shared sync transport
 
 - **Capability:** a Kotlin Multiplatform HTTP client that transfers opaque Phase 3 records and ciphertext on Android and iOS.
 - **Alternatives:** the Kotlin standard library has no network client. Separate native clients would duplicate the wire boundary and behavior.
@@ -229,6 +225,10 @@ iOS adds nothing: `AVFoundation` is part of the platform, and the resource-loade
 - **Owner and license:** the `proptest-rs` organization maintains it under MIT OR Apache-2.0.
 - **Footprint:** a dev-dependency only, so it never enters a library, an FFI artifact, or an app. Default features are off and only `std` is on: no process fork, timeout thread, or temp-file graph. It adds `rand`, `rand_xorshift`, `regex-syntax`, `unarray`, and `core_detect` to the test graph. No `unsafe` code of ours, no build script, no network access.
 - **Update and removal:** Dependabot updates it with the cargo group. Removal deletes the test file and the dev-dependency.
+
+### Dependencies in the isolated post-quantum build
+
+The internal Rust build enables the `mlkem` feature of `hpke` 0.15.1 and adds `ml-dsa` 0.1.2 with zeroization. Its lockfile pins `x-wing` 0.1.1, `ml-kem` 0.3.4 and `module-lattice` 0.2.4. Preserve their MIT or Apache-2.0 license notices. The pure Rust implementations work with the iOS 18 deployment target. A dependency update requires advisory, feature and license review, independent vectors, and builds on the supported mobile targets. The published `x-wing` and `ml-dsa` implementations report that they have not had an independent audit. [Dependency decision](adr/0073-internal-post-quantum-profile.md#dependencies-and-release-decision)
 
 ## Cargo features
 

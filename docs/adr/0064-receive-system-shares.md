@@ -15,8 +15,6 @@ Keep incoming sources with the platform host and expose only a count to the publ
 
 Android keeps temporary content grants and text in process memory. iOS uses an extension-specific encrypted App Group queue: the extension receives only a public encryption key, while the private key remains in the main application's device-local Keychain. Main-app finalization decrypts only after user confirmation in an unlocked session. The extension does not open the vault or invoke private application-launch APIs. No shared Keychain access group or vault root is added.
 
-The internal post-quantum profile assigns a new inbox version and a separate app-owned receiving seed. [ADR-0073](0073-internal-post-quantum-profile.md)
-
 ## Alternatives considered
 
 Saving incoming content into public Notes discloses it through a different storage and backup boundary. Persisting provider URLs does not preserve temporary grants. A plaintext App Group inbox would retain originals outside the vault across process death. Sharing vault keys with an extension would broaden the root-key and catalog boundary.

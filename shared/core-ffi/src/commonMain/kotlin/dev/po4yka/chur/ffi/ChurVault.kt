@@ -291,13 +291,13 @@ object ChurVault {
         val result = objectKeyCall(session, collectionId + objectId, ChurNative::objectKeyRequest)
         require(result.isNotEmpty() && (result[0] == 0.toByte() || result[0] == 1.toByte()))
         if (result[0] == 0.toByte()) { require(result.size == 1); return null }
-        require(result.size == 1 + OBJECT_PREKEY_LENGTH)
+        require(result.size == 227)
         return result.copyOfRange(1, result.size)
     }
 
 
     fun objectKeyAccept(session: Long, packageBytes: ByteArray, grant: ByteArray) {
-        require(packageBytes.size <= SHARING_BUNDLE_CAPACITY - OBJECT_GRANT_LENGTH - 8 && grant.size == OBJECT_GRANT_LENGTH)
+        require(packageBytes.size <= 16_776_000 && grant.size == 346)
         fun length(value: Int) = byteArrayOf((value ushr 24).toByte(), (value ushr 16).toByte(),
             (value ushr 8).toByte(), value.toByte())
         objectKeyCall(session, length(packageBytes.size) + packageBytes + length(grant.size) + grant,
@@ -309,7 +309,7 @@ object ChurVault {
         call: (Long, ChurBuffer, Int, ChurBuffer, IntArray) -> Int,
     ): ByteArray = withChurBuffer(bytes.size) { input ->
         input.copyIn(bytes)
-        withChurBuffer(maxOf(1 + OBJECT_PREKEY_LENGTH, OBJECT_GRANT_LENGTH)) { output ->
+        withChurBuffer(512) { output ->
             val written = IntArray(1)
             ChurFailure.check(call(session, input, bytes.size, output, written), "object key delivery")
             output.copyOut(written[0])
@@ -455,16 +455,16 @@ object ChurVault {
         pairingCall(session, input, ChurNative::peerCall, when (input.firstOrNull()?.toInt()) {
             1 -> 34
             5 -> 4 * 1024 * 1024 + 1
-            8 -> 2 * 1024 * 1024
+            8 -> 512 * 1024
             9 -> 16
-            10 -> PAIRING_CREDENTIALS_CAPACITY
-            11 -> OBJECT_GRANT_LENGTH
+            10 -> 8_192
+            11 -> 346
             12 -> 1024 * 1024
             else -> 1
         })
 
     fun prepareDevicePairing(session: Long): DevicePairingRequest =
-        decodeDevicePairingRequest(pairingCall(session, byteArrayOf(), ChurNative::devicePairingPrepare, 8 * 1024))
+        decodeDevicePairingRequest(pairingCall(session, byteArrayOf(), ChurNative::devicePairingPrepare, 512))
 
     fun inspectDevicePairing(session: Long, request: ByteArray): DevicePairingPreview =
         decodeDevicePairingPreview(pairingCall(session, request, ChurNative::devicePairingInspect, 128))
@@ -478,7 +478,7 @@ object ChurVault {
     }
 
     fun startDevicePairing(session: Long, approval: ByteArray): DevicePairingCredentials {
-        val response = pairingCall(session, approval, ChurNative::devicePairingStart, PAIRING_CREDENTIALS_CAPACITY)
+        val response = pairingCall(session, approval, ChurNative::devicePairingStart, 8_192)
         return try { decodeDevicePairingCredentials(response) } finally { response.fill(0) }
     }
 
@@ -500,7 +500,7 @@ object ChurVault {
         session: Long,
         input: ByteArray,
         call: (Long, ChurBuffer, Int, ChurBuffer, IntArray) -> Int,
-        outputCapacity: Int = 16 * 1024 * 1024 + 32 * 1024,
+        outputCapacity: Int = 16 * 1024 * 1024 + 8_192,
     ): ByteArray {
         require(input.size <= 16 * 1024 * 1024) { "device pairing input is too large" }
         return withChurBuffer(maxOf(1, input.size)) { source ->
@@ -712,8 +712,8 @@ object ChurVault {
     }
 
     private fun requirePlaybackPositionAbi() {
-        if (ChurNative.abiVersionMajor() != 8 || ChurNative.abiVersionMinor() < 2) {
-            throw ChurFailure(ChurStatus.ABI_INCOMPATIBLE, "encrypted playback positions require ABI 8.2")
+        if (ChurNative.abiVersionMajor() != 7 || ChurNative.abiVersionMinor() < 2) {
+            throw ChurFailure(ChurStatus.ABI_INCOMPATIBLE, "encrypted playback positions require ABI 7.2")
         }
     }
 
@@ -1266,8 +1266,8 @@ object ChurVault {
     }
 
     private fun requireCurrentAbi() {
-        if (ChurNative.abiVersionMajor() != 8) {
-            throw ChurFailure(ChurStatus.ABI_INCOMPATIBLE, "native ABI 8 is required")
+        if (ChurNative.abiVersionMajor() != 7) {
+            throw ChurFailure(ChurStatus.ABI_INCOMPATIBLE, "native ABI 7 is required")
         }
     }
 
@@ -1732,19 +1732,15 @@ object ChurVault {
     private const val KEYSTORE_MATERIAL_CAPACITY = 4 + 2 * (4 + 64 + 4 + 160 + 12 + 48)
 
     /** The bounded public identity, enrollment, and initial operation record. */
-    private const val SHARING_IDENTITY_CAPACITY = 32 * 1024
+    private const val SHARING_IDENTITY_CAPACITY = 4 * 1024
 
     /** Four thousand active members with identifiers and fingerprints. */
     private const val SHARING_OVERVIEW_CAPACITY = 512 * 1024
 
-    private const val OBJECT_PREKEY_LENGTH = 4_655
-    private const val PAIRING_CREDENTIALS_CAPACITY = 16 * 1024
-    private const val OBJECT_GRANT_LENGTH = 4_679
-
     private const val SHARING_RECIPIENT_CAPACITY = 128
 
-    /** Membership and grant, plus their signed operation records. */
-    private const val PREPARED_SHARE_CAPACITY = 64 * 1024
+    /** Four bounded sharing records; current v1 output is below two KiB. */
+    private const val PREPARED_SHARE_CAPACITY = 16 * 1024
 
     /** The exact response bound required before a revocation changes state. */
     private const val SHARING_BUNDLE_CAPACITY = 16 * 1024 * 1024

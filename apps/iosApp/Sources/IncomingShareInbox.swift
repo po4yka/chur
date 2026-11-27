@@ -1,4 +1,3 @@
-import ChurInboxNative
 import CryptoKit
 import Darwin
 import Foundation
@@ -14,108 +13,53 @@ final class IncomingShareInbox: @unchecked Sendable {
     static let itemLimit = 64
     static let lifetime: TimeInterval = 24 * 60 * 60
     static let chunkSize = 1024 * 1024
-    private static let magic = Data("CHURIN02".utf8)
+    private static let magic = Data("CHURIN01".utf8)
     let root: URL
-    private let publicKey: Data
-    private let privateKey: SymmetricKey?
+    private let publicKey: SecKey
+    private let privateKey: SecKey?
 
-    init(root: URL, publicKey: Data, privateKey: SymmetricKey? = nil) throws {
-        guard publicKey.count == Int(CHUR_INBOX_PUBLIC_LEN),
-            privateKey == nil || privateKey?.bitCount == 256 else { throw IncomingShareFailure.invalid }
+    init(root: URL, publicKey: SecKey, privateKey: SecKey? = nil) throws {
         self.root = root; self.publicKey = publicKey; self.privateKey = privateKey
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true,
             attributes: [.protectionKey: FileProtectionType.complete])
         try (root as NSURL).setResourceValue(true, forKey: .isExcludedFromBackupKey)
     }
 
-    private static func groupPaths() throws -> (root: URL, publicKey: URL) {
+    static func open(forApplication: Bool) throws -> IncomingShareInbox {
         guard let groupRoot = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else {
             throw IncomingShareFailure.unavailable
         }
-        return (groupRoot.appendingPathComponent("inbox", isDirectory: true),
-                groupRoot.appendingPathComponent("ingress-public-key-v2"))
-    }
-
-    #if !CHUR_SHARE_EXTENSION
-    static func recipientPublicKey(for seed: SymmetricKey) throws -> Data {
-        guard seed.bitCount == 256 else { throw IncomingShareFailure.invalid }
-        var bytes = Data(count: Int(CHUR_INBOX_PUBLIC_LEN))
-        let status = bytes.withUnsafeMutableBytes { output in
-            seed.withUnsafeBytes { input in
-                chur_inbox_public(input.bindMemory(to: UInt8.self).baseAddress,
-                                  output.bindMemory(to: UInt8.self).baseAddress)
+        let root = groupRoot.appendingPathComponent("inbox", isDirectory: true)
+        let publicURL = groupRoot.appendingPathComponent("ingress-public-key")
+        if forApplication {
+            let tag = Data("dev.po4yka.chur.incoming.rsa.v1".utf8)
+            let query: [CFString: Any] = [kSecClass: kSecClassKey, kSecAttrApplicationTag: tag,
+                kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecReturnRef: true]
+            var found: CFTypeRef?
+            let status = SecItemCopyMatching(query as CFDictionary, &found)
+            let key: SecKey
+            if status == errSecSuccess, let found { key = (found as! SecKey) }
+            else if status == errSecItemNotFound {
+                var error: Unmanaged<CFError>?
+                guard let created = SecKeyCreateRandomKey([
+                    kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeySizeInBits: 2048,
+                    kSecPrivateKeyAttrs: [kSecAttrIsPermanent: true, kSecAttrApplicationTag: tag,
+                        kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly],
+                ] as CFDictionary, &error) else { throw IncomingShareFailure.unavailable }
+                key = created
+            } else { throw IncomingShareFailure.unavailable }
+            guard let publicKey = SecKeyCopyPublicKey(key), let bytes = SecKeyCopyExternalRepresentation(publicKey, nil) as Data? else {
+                throw IncomingShareFailure.unavailable
             }
+            try bytes.write(to: publicURL, options: .atomic)
+            try (publicURL as NSURL).setResourceValue(true, forKey: .isExcludedFromBackupKey)
+            return try IncomingShareInbox(root: root, publicKey: publicKey, privateKey: key)
         }
-        guard status == 0 else { throw IncomingShareFailure.unavailable }
-        return bytes
-    }
-
-    private static func receivingSeed() throws -> SymmetricKey {
-        let identity: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword, kSecAttrService: "dev.po4yka.chur.incoming",
-            kSecAttrAccount: "xwing-v2", kSecAttrSynchronizable: false,
-        ]
-        var query = identity
-        query[kSecReturnData] = true
-        func load() throws -> SymmetricKey? {
-            var result: CFTypeRef?
-            let status = SecItemCopyMatching(query as CFDictionary, &result)
-            if status == errSecItemNotFound { return nil }
-            guard status == errSecSuccess, var bytes = result as? Data,
-                  bytes.count == Int(CHUR_INBOX_SEED_LEN) else { throw IncomingShareFailure.unavailable }
-            defer { bytes.resetBytes(in: 0..<bytes.count) }
-            return SymmetricKey(data: bytes)
-        }
-        if let key = try load() { return key }
-        let key = SymmetricKey(size: .bits256)
-        var bytes = key.withUnsafeBytes { Data($0) }
-        defer { bytes.resetBytes(in: 0..<bytes.count) }
-        var add = identity
-        add[kSecAttrAccessible] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        add[kSecValueData] = bytes
-        let status = SecItemAdd(add as CFDictionary, nil)
-        if status == errSecDuplicateItem, let existing = try load() { return existing }
-        guard status == errSecSuccess else { throw IncomingShareFailure.unavailable }
-        return key
-    }
-
-    static func openForApplication() throws -> IncomingShareInbox {
-        let paths = try groupPaths()
-        let key = try receivingSeed()
-        let bytes = try recipientPublicKey(for: key)
-        try bytes.write(to: paths.publicKey, options: [.atomic, .completeFileProtection])
-        try (paths.publicKey as NSURL).setResourceValue(true, forKey: .isExcludedFromBackupKey)
-        return try IncomingShareInbox(root: paths.root, publicKey: bytes, privateKey: key)
-    }
-    #endif
-
-    static func openForExtension() throws -> IncomingShareInbox {
-        let paths = try groupPaths()
-        let fd = Darwin.open(paths.publicKey.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
-        guard fd >= 0 else { throw IncomingShareFailure.unavailable }
-        let input = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-        defer { try? input.close() }
-        var stat = Darwin.stat()
-        guard fstat(fd, &stat) == 0, stat.st_mode & S_IFMT == S_IFREG,
-              stat.st_size == Int64(CHUR_INBOX_PUBLIC_LEN) else { throw IncomingShareFailure.unavailable }
-        let bytes = try exact(Int(CHUR_INBOX_PUBLIC_LEN), from: input)
-        guard try input.read(upToCount: 1)?.isEmpty != false else { throw IncomingShareFailure.unavailable }
-        return try IncomingShareInbox(root: paths.root, publicKey: bytes)
-    }
-
-    private func seal(_ key: SymmetricKey) throws -> Data {
-        var envelope = Data(count: Int(CHUR_INBOX_ENVELOPE_LEN))
-        let status = envelope.withUnsafeMutableBytes { output in
-            publicKey.withUnsafeBytes { recipient in
-                key.withUnsafeBytes { secret in
-                    chur_inbox_seal(recipient.bindMemory(to: UInt8.self).baseAddress,
-                                    secret.bindMemory(to: UInt8.self).baseAddress,
-                                    output.bindMemory(to: UInt8.self).baseAddress)
-                }
-            }
-        }
-        guard status == 0 else { throw IncomingShareFailure.unavailable }
-        return envelope
+        let bytes = try Data(contentsOf: publicURL, options: .mappedIfSafe)
+        guard bytes.count <= 1024, let key = SecKeyCreateWithData(bytes as CFData,
+            [kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeyClass: kSecAttrKeyClassPublic,
+             kSecAttrKeySizeInBits: 2048] as CFDictionary, nil) else { throw IncomingShareFailure.unavailable }
+        return try IncomingShareInbox(root: root, publicKey: key)
     }
 
     private func locked<T>(_ body: () throws -> T) throws -> T {
@@ -214,7 +158,7 @@ final class IncomingShareInbox: @unchecked Sendable {
                     guard used <= Self.totalLimit else { throw IncomingShareFailure.limit }
                 }
             }
-            let overhead: Int64 = (size / Int64(Self.chunkSize) + 2) * 32 + 8192 + Int64(Self.magic.count) + Int64(CHUR_INBOX_ENVELOPE_LEN)
+            let overhead: Int64 = (size / Int64(Self.chunkSize) + 1) * 32 + 8192
             guard size >= 0, size <= Self.entryLimit, size <= Self.totalLimit - used - overhead else { throw IncomingShareFailure.limit }
             // Provider names are untrusted. A single Swift Character can contain
             // thousands of combining scalars; bound UTF-8 bytes, not graphemes.
@@ -222,7 +166,12 @@ final class IncomingShareInbox: @unchecked Sendable {
             let cleanType = String(decoding: contentType.utf8.prefix(256), as: UTF8.self)
             let meta = Metadata(name: cleanName.isEmpty ? "Shared file" : cleanName, contentType: cleanType, size: size)
             let key = SymmetricKey(size: .bits256)
-            let header = try Self.magic + seal(key)
+            var keyBytes = key.withUnsafeBytes { Data($0) }
+            defer { keyBytes.resetBytes(in: 0..<keyBytes.count) }
+            guard let wrapped = SecKeyCreateEncryptedData(publicKey, .rsaEncryptionOAEPSHA256, keyBytes as CFData, nil) as Data?, wrapped.count == 256 else {
+                throw IncomingShareFailure.unavailable
+            }
+            let header = Self.magic + wrapped
             let output = batch.appendingPathComponent(String(format: "%03d", own.count) + ".cipher")
             let fd = Darwin.open(output.path, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, S_IRUSR | S_IWUSR)
             guard fd >= 0 else { throw IncomingShareFailure.unavailable }
@@ -270,7 +219,6 @@ final class IncomingShareInbox: @unchecked Sendable {
         }
         return result
     }
-    #if !CHUR_SHARE_EXTENSION
     private static func readFrame(from reader: FileHandle, key: SymmetricKey, aad: Data, limit: Int) throws -> Data {
         let size = try exact(4, from: reader).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
         guard size >= 28, size <= limit + 28 else { throw IncomingShareFailure.invalid }
@@ -283,23 +231,10 @@ final class IncomingShareInbox: @unchecked Sendable {
         guard fd >= 0 else { throw IncomingShareFailure.invalid }
         let reader = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         do {
-            let version = try Self.exact(Self.magic.count, from: reader)
-            guard version == Self.magic else { throw IncomingShareFailure.invalid }
-            let envelope = try Self.exact(Int(CHUR_INBOX_ENVELOPE_LEN), from: reader)
-            let header = version + envelope
-            var bytes = Data(count: Int(CHUR_INBOX_KEY_LEN))
-            defer { bytes.resetBytes(in: 0..<bytes.count) }
-            let status = bytes.withUnsafeMutableBytes { output in
-                privateKey.withUnsafeBytes { seed in
-                    envelope.withUnsafeBytes { input in
-                        chur_inbox_open(seed.bindMemory(to: UInt8.self).baseAddress,
-                                        input.bindMemory(to: UInt8.self).baseAddress,
-                                        output.bindMemory(to: UInt8.self).baseAddress)
-                    }
-                }
-            }
-            guard status == 0 else { throw IncomingShareFailure.invalid }
-            let key = SymmetricKey(data: bytes)
+            let header = try Self.exact(264, from: reader)
+            guard header.prefix(8) == Self.magic,
+                var bytes = SecKeyCreateDecryptedData(privateKey, .rsaEncryptionOAEPSHA256, header.suffix(256) as CFData, nil) as Data?, bytes.count == 32 else { throw IncomingShareFailure.invalid }
+            let key = SymmetricKey(data: bytes); bytes.resetBytes(in: 0..<bytes.count)
             var metadataBytes = try Self.readFrame(from: reader, key: key, aad: header + Self.number(0), limit: 8192)
             defer { metadataBytes.resetBytes(in: 0..<metadataBytes.count) }
             let meta = try JSONDecoder().decode(Metadata.self, from: metadataBytes)
@@ -373,5 +308,4 @@ final class IncomingShareInbox: @unchecked Sendable {
             if metadata.size == 0 { guard try handle.read(upToCount: 1)?.isEmpty != false else { throw IncomingShareFailure.invalid } }
         }
     }
-    #endif
 }

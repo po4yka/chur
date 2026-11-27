@@ -780,7 +780,7 @@ mod tests {
             observed_heads,
             id(21),
             vec![7; 40],
-            [9; chur_crypto::post_quantum::SIGNATURE_LEN],
+            [9; 64],
         )
         .expect("collection record");
         CausalStamp::from_collection_operation(&record)
@@ -801,15 +801,10 @@ mod tests {
         let mut keys = KeyDirectory::new(&catalog_root, &source).expect("keys");
         keys.insert(domain).expect("domain key");
         let signing = DeviceSigningKey::from_seed([4; 32]);
-        let enrollment = EnrollmentRecord::initial(
-            source,
-            id(20),
-            signing.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([5; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("enrollment")
-        .sign(&signing);
+        let enrollment =
+            EnrollmentRecord::initial(source, id(20), signing.verifying_key(), [5; 32])
+                .expect("enrollment")
+                .sign(&signing);
         let membership = MembershipState::bootstrap(&enrollment).expect("membership");
         let mut log =
             sharing_log::DurableCollectionOperationLog::provision(&mut db, collection, 1, selector)

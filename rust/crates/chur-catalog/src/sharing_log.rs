@@ -1350,15 +1350,10 @@ mod tests {
 
     fn identity(vault: Id, device: Id, seed: u8) -> (DeviceSigningKey, MembershipState) {
         let key = DeviceSigningKey::from_seed([seed; 32]);
-        let enrollment = EnrollmentRecord::initial(
-            vault,
-            device,
-            key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([seed + 1; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("enrollment")
-        .sign(&key);
+        let enrollment =
+            EnrollmentRecord::initial(vault, device, key.verifying_key(), [seed + 1; 32])
+                .expect("enrollment")
+                .sign(&key);
         (
             key,
             MembershipState::bootstrap(&enrollment).expect("membership"),
@@ -1389,8 +1384,7 @@ mod tests {
             id(3),
             id(4),
             recipient_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([21; 32]))
-                .expect("test recipient key"),
+            [21; 32],
             1,
             id(1),
             id(2),
@@ -2143,8 +2137,7 @@ mod tests {
                     id(3),
                     id(4),
                     member_key.verifying_key(),
-                    chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([21; 32]))
-                        .expect("test recipient key"),
+                    [21; 32],
                     1,
                     id(1),
                     id(2),
@@ -2265,8 +2258,7 @@ mod tests {
             id(3),
             id(4),
             member_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([21; 32]))
-                .expect("test recipient key"),
+            [21; 32],
             1,
             id(1),
             id(2),

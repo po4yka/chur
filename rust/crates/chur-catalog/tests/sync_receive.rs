@@ -37,15 +37,9 @@ fn setup() -> Fixture {
     let mut db = CatalogDb::open(&CatalogLocation::Memory, &catalog_key).expect("catalog");
     schema::open_at_current_version(&mut db, 1).expect("schema");
     let issuer = DeviceSigningKey::from_seed([3; 32]);
-    let initial = EnrollmentRecord::initial(
-        id(2),
-        id(4),
-        issuer.verifying_key(),
-        chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([5; 32]))
-            .expect("test recipient key"),
-    )
-    .expect("initial")
-    .sign(&issuer);
+    let initial = EnrollmentRecord::initial(id(2), id(4), issuer.verifying_key(), [5; 32])
+        .expect("initial")
+        .sign(&issuer);
     let membership = sync_membership::provision(&mut db, &initial).expect("membership");
     Fixture {
         db,
@@ -62,15 +56,10 @@ fn initial_membership_and_outer_operation_provision_together() {
     let mut db = CatalogDb::open(&CatalogLocation::Memory, &catalog_key).expect("catalog");
     schema::open_at_current_version(&mut db, 1).expect("schema");
     let signing_key = DeviceSigningKey::from_seed([52; 32]);
-    let enrollment = EnrollmentRecord::initial(
-        id(51),
-        id(53),
-        signing_key.verifying_key(),
-        chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([54; 32]))
-            .expect("test recipient key"),
-    )
-    .expect("initial")
-    .sign(&signing_key);
+    let enrollment =
+        EnrollmentRecord::initial(id(51), id(53), signing_key.verifying_key(), [54; 32])
+            .expect("initial")
+            .sign(&signing_key);
 
     let (membership, log, operation) =
         sync_receive::provision_initial_membership(&mut db, &root, &signing_key, &enrollment)
@@ -98,15 +87,10 @@ fn failed_initial_provision_writes_no_outer_operation() {
     let mut db = CatalogDb::open(&CatalogLocation::Memory, &catalog_key).expect("catalog");
     schema::open_at_current_version(&mut db, 1).expect("schema");
     let signing_key = DeviceSigningKey::from_seed([57; 32]);
-    let enrollment = EnrollmentRecord::initial(
-        id(56),
-        id(58),
-        signing_key.verifying_key(),
-        chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([59; 32]))
-            .expect("test recipient key"),
-    )
-    .expect("initial")
-    .sign(&signing_key);
+    let enrollment =
+        EnrollmentRecord::initial(id(56), id(58), signing_key.verifying_key(), [59; 32])
+            .expect("initial")
+            .sign(&signing_key);
     sync_membership::provision(&mut db, &enrollment).expect("membership only");
 
     assert!(
@@ -142,8 +126,7 @@ fn sharing_membership_and_log_head_commit_together() {
         id(83),
         id(84),
         recipient.verifying_key(),
-        chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([85; 32]))
-            .expect("test recipient key"),
+        [85; 32],
         1,
         id(2),
         id(4),
@@ -187,8 +170,7 @@ fn sharing_membership_and_log_head_commit_together() {
         1,
         id(83),
         id(84),
-        &chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([85; 32]))
-            .expect("test recipient key"),
+        &[85; 32],
         id(4),
         PermissionProfile::Read,
         1,
@@ -225,8 +207,7 @@ fn sharing_membership_and_log_head_commit_together() {
         id(83),
         id(84),
         recipient.verifying_key(),
-        chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([85; 32]))
-            .expect("test recipient key"),
+        [85; 32],
         1,
         id(2),
         id(4),
@@ -262,15 +243,9 @@ fn locally_authored_enrollment_and_revocation_commit_with_their_log_heads() {
     let catalog_key = CatalogKey::derive(&root, &vault).expect("catalog key");
     let mut db = CatalogDb::open(&CatalogLocation::Memory, &catalog_key).expect("catalog");
     schema::open_at_current_version(&mut db, 1).expect("schema");
-    let initial = EnrollmentRecord::initial(
-        vault,
-        owner_id,
-        owner.verifying_key(),
-        chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([64; 32]))
-            .expect("test recipient key"),
-    )
-    .expect("initial")
-    .sign(&owner);
+    let initial = EnrollmentRecord::initial(vault, owner_id, owner.verifying_key(), [64; 32])
+        .expect("initial")
+        .sign(&owner);
     let (mut membership, mut log, _) =
         sync_receive::provision_initial_membership(&mut db, &root, &owner, &initial)
             .expect("provision");
@@ -284,8 +259,7 @@ fn locally_authored_enrollment_and_revocation_commit_with_their_log_heads() {
         vault,
         peer_id,
         peer.verifying_key(),
-        chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([67; 32]))
-            .expect("test recipient key"),
+        [67; 32],
         2,
         owner_id,
         2,
@@ -312,8 +286,7 @@ fn locally_authored_enrollment_and_revocation_commit_with_their_log_heads() {
         vault,
         peer_id,
         peer.verifying_key(),
-        chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([67; 32]))
-            .expect("test recipient key"),
+        [67; 32],
         2,
         owner_id,
         2,
@@ -452,8 +425,7 @@ fn membership_and_log_head_commit_together() {
         id(2),
         id(9),
         peer.verifying_key(),
-        chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([10; 32]))
-            .expect("test recipient key"),
+        [10; 32],
         1,
         id(4),
         2,
@@ -497,8 +469,7 @@ fn invalid_nested_membership_rolls_back_the_log_head() {
         id(2),
         id(14),
         peer.verifying_key(),
-        chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([15; 32]))
-            .expect("test recipient key"),
+        [15; 32],
         1,
         id(4),
         2,
@@ -649,9 +620,8 @@ fn a_membership_record_carries_a_source_rotation_the_recipient_never_observed() 
         CollectionMembershipAction::Upsert(PermissionProfile::Read),
         id(7),
         id(8),
-        chur_crypto::post_quantum::IdentitySigner::from_seed(&[9; 32]).public(),
-        chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([10; 32]))
-            .expect("test recipient key"),
+        [9; 32],
+        [10; 32],
         2,
         id(2),
         id(4),
@@ -1193,8 +1163,7 @@ fn inbound_sharing_membership_routes_through_accept_operation() {
         id(93),
         id(94),
         recipient.verifying_key(),
-        chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([95; 32]))
-            .expect("test recipient key"),
+        [95; 32],
         1,
         id(2),
         id(4),
@@ -1232,8 +1201,7 @@ fn inbound_sharing_membership_routes_through_accept_operation() {
         id(2),
         id(99),
         peer.verifying_key(),
-        chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([100; 32]))
-            .expect("test recipient key"),
+        [100; 32],
         3,
         id(4),
         2,
@@ -1282,8 +1250,7 @@ fn inbound_sharing_membership_routes_through_accept_operation() {
         1,
         id(93),
         id(94),
-        &chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([95; 32]))
-            .expect("test recipient key"),
+        &[95; 32],
         id(4),
         PermissionProfile::Read,
         1,

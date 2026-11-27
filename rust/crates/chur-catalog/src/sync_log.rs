@@ -1333,15 +1333,9 @@ mod tests {
         let mut db = CatalogDb::open(&CatalogLocation::Memory, &catalog_key).expect("catalog");
         open_at_current_version(&mut db, 1).expect("schema");
         let key = DeviceSigningKey::from_seed([2; 32]);
-        let enrollment = EnrollmentRecord::initial(
-            id(1),
-            id(3),
-            key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([4; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("enrollment")
-        .sign(&key);
+        let enrollment = EnrollmentRecord::initial(id(1), id(3), key.verifying_key(), [4; 32])
+            .expect("enrollment")
+            .sign(&key);
         let membership = sync_membership::provision(&mut db, &enrollment).expect("membership");
         (db, membership, key)
     }
@@ -1490,8 +1484,7 @@ mod tests {
             id(1),
             id(6),
             revoked_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([4; 32]))
-                .expect("test recipient key"),
+            [4; 32],
             2,
             id(3),
             2,
@@ -1847,8 +1840,7 @@ mod tests {
             id(1),
             id(6),
             second_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([4; 32]))
-                .expect("test recipient key"),
+            [4; 32],
             2,
             id(3),
             2,
@@ -1950,8 +1942,7 @@ mod tests {
             id(1),
             id(byte),
             device_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([4; 32]))
-                .expect("test recipient key"),
+            [4; 32],
             generation,
             id(3),
             generation,

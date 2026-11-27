@@ -548,15 +548,10 @@ mod tests {
         let mut db = CatalogDb::open(&CatalogLocation::Memory, &catalog_key).expect("catalog");
         open_at_current_version(&mut db, 1).expect("schema");
         let signing_key = DeviceSigningKey::from_seed([4; 32]);
-        let enrollment = EnrollmentRecord::initial(
-            id(1),
-            id(2),
-            signing_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([5; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("enrollment")
-        .sign(&signing_key);
+        let enrollment =
+            EnrollmentRecord::initial(id(1), id(2), signing_key.verifying_key(), [5; 32])
+                .expect("enrollment")
+                .sign(&signing_key);
         let membership = sync_membership::provision(&mut db, &enrollment).expect("membership");
         db.transaction(|transaction| {
             transaction

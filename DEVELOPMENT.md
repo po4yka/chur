@@ -56,6 +56,28 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for module ownership. There i
 
 Use `./gradlew --version`, `rustup show` from `rust/`, and `xcodebuild -version` to check the selected tools. `ANDROID_HOME` identifies the SDK. Set `ANDROID_NDK_HOME` for the native script if more than one NDK is installed; Gradle uses the catalog pin.
 
+## Internal post-quantum build
+
+Normal Gradle, Cargo and Xcode commands use the classical profile and native ABI 7.4. Use the following command from the checkout root for the internal profile. Each invocation needs a new directory with an existing parent. Choose a sibling of the checkout or an empty path under a temporary directory.
+
+```text
+scripts/build-internal-pq.sh prepare NEW_DIRECTORY
+scripts/build-internal-pq.sh test NEW_DIRECTORY
+scripts/build-internal-pq.sh android NEW_DIRECTORY
+scripts/build-internal-pq.sh ios NEW_DIRECTORY
+```
+
+The script copies the current working-tree contents of tracked files, applies the internal source and vector changes, and adds the internal files in the destination. The source checkout stays available for ordinary builds. Untracked files, including SDK settings and signing credentials, are outside the snapshot. Set the SDK environment variables from Initial setup. The script stops if the destination already exists or if an internal change no longer applies to the copied sources.
+
+| Command | Result in the new directory |
+|---|---|
+| `prepare` | A source tree ready for inspection or native builds. |
+| `test` | The Rust workspace tests and CLI vector verification. Cargo writes the build output under `rust/target/`. |
+| `android` | A Debug APK under `apps/androidApp/build/outputs/apk/debug/`. |
+| `ios` | An unsigned iOS Simulator Debug app under `build/xcode/Build/Products/Debug-iphonesimulator/`. |
+
+Both internal apps use `dev.po4yka.chur.pqinternal`, native ABI 8.4 and a new vault. Use the ordinary application for historical vaults. Keep test measurements with the source revision, build profile, ABI and target device. [Profile decision](docs/adr/0073-internal-post-quantum-profile.md) · [Release checks](docs/assurance/RELEASE_GATES.md#internal-post-quantum-profile)
+
 ## Build commands
 
 The `:shared:app` and `:shared:feature-import` iOS tests use Apple Vision, ImageIO, and the system type registry. They need a fully booted simulator. A standalone simulator process can return no text or fail to resolve a registered media type without an API error. CI creates, boots, and removes its own compatible iPhone simulator. For a local run, boot a simulator that you own and set `CHUR_IOS_TEST_DEVICE` to its UDID. The build does not change the state of existing devices. Without this variable, Gradle uses its normal Xcode-selected device, which must already be booted.
@@ -135,7 +157,7 @@ The installed API 37 image's Goldfish H.264 host decoder fails to transfer a `Me
 On macOS, run the host helpers and compile the full iOS app and embedded extension:
 
 ```sh
-apps/iosApp/test-host.sh
+swift test --package-path apps/iosApp
 xcodebuild -project apps/iosApp/Chur.xcodeproj -scheme Chur \
   -configuration Debug -destination 'generic/platform=iOS Simulator' \
   CODE_SIGNING_ALLOWED=NO build

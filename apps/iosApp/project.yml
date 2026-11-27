@@ -68,7 +68,6 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "5.0"
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) CHUR_FILAMENT"
-        SWIFT_INCLUDE_PATHS: "$(inherited) $(SRCROOT)/InboxNative"
         SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/SpiritRenderer/ChurSpirit-Bridging-Header.h"
         HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/SpiritRenderer/.vendor/filament/include"
         CLANG_CXX_LANGUAGE_STANDARD: c++17
@@ -134,11 +133,6 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.po4yka.chur.share
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) CHUR_SHARE_EXTENSION"
-        SWIFT_INCLUDE_PATHS: "$(inherited) $(SRCROOT)/InboxNative"
-        OTHER_LDFLAGS: "$(inherited) $(DERIVED_FILE_DIR)/libchur_ffi.a -framework Security"
-        DEAD_CODE_STRIPPING: YES
-        ENABLE_USER_SCRIPT_SANDBOXING: NO
         CODE_SIGN_ENTITLEMENTS: IncomingShare.entitlements
         APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES
@@ -146,15 +140,6 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "5.0"
         CODE_SIGNING_ALLOWED: NO
-
-    preBuildScripts:
-      - name: Stage inbox static library
-        basedOnDependencyAnalysis: false
-        script: |
-          set -euo pipefail
-          archive=$("$SRCROOT/build-inbox.sh" "$PLATFORM_NAME")
-          mkdir -p "$DERIVED_FILE_DIR"
-          ditto "$archive" "$DERIVED_FILE_DIR/libchur_ffi.a"
 
   ChurUITests:
     type: bundle.ui-testing

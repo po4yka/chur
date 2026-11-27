@@ -82,7 +82,7 @@ pub unsafe extern "C" fn chur_sharing_identity(
             );
             let mut writer = Writer::new();
             writer
-                .u16(2)
+                .u16(RECORD_VERSION_V1)
                 .id(enrollment.vault_id())
                 .id(enrollment.device_id())
                 .fixed(enrollment.signing_public_key())
@@ -911,12 +911,16 @@ fn decode_issuer(reader: &mut Reader<'_>) -> Result<DecodedIssuer, Error> {
     for _ in 0..membership_count {
         let bytes = reader.variable(EnrollmentRecord::LEN as u32)?;
         let record = match bytes.len() {
-            EnrollmentRecord::LEN => chur_catalog::sharing_service::IssuerMembershipRecord::from(
-                EnrollmentRecord::decode(bytes)?,
-            ),
-            RevocationRecord::LEN => chur_catalog::sharing_service::IssuerMembershipRecord::from(
-                RevocationRecord::decode(bytes)?,
-            ),
+            EnrollmentRecord::LEN => {
+                chur_catalog::sharing_service::IssuerMembershipRecord::Enrollment(
+                    EnrollmentRecord::decode(bytes)?,
+                )
+            }
+            RevocationRecord::LEN => {
+                chur_catalog::sharing_service::IssuerMembershipRecord::Revocation(
+                    RevocationRecord::decode(bytes)?,
+                )
+            }
             _ => {
                 return Err(Error::new(
                     ChurStatus::NonCanonicalEncoding,
@@ -989,7 +993,7 @@ pub unsafe extern "C" fn chur_object_key_request(
             destination,
             capacity,
             bytes_written,
-            1 + chur_sync_protocol::object_grant::ObjectPrekey::LEN,
+            227,
             |db, root, vault_id, input| {
                 let mut reader = Reader::new(input, ChurStatus::NonCanonicalEncoding);
                 let collection = reader.id()?;
@@ -1034,7 +1038,7 @@ pub unsafe extern "C" fn chur_object_key_issue(
             destination,
             capacity,
             bytes_written,
-            chur_sync_protocol::object_grant::ObjectKeyGrant::LEN,
+            346,
             |db, root, vault_id, input| {
                 let prekey = chur_sync_protocol::object_grant::ObjectPrekey::decode(input)?;
                 Ok(chur_catalog::object_grants::issue(db, root, vault_id, &prekey)?.encode())
@@ -1076,8 +1080,7 @@ pub unsafe extern "C" fn chur_object_key_accept(
                     decode_accept_bundle(package)?.0
                 };
                 let grant = chur_sync_protocol::object_grant::ObjectKeyGrant::decode(
-                    reader
-                        .variable(chur_sync_protocol::object_grant::ObjectKeyGrant::LEN as u32)?,
+                    reader.variable(1024)?,
                 )?;
                 reader.finish()?;
                 let evidence = issuers

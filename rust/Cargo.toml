@@ -45,12 +45,15 @@ chur-sync-protocol = { path = "crates/chur-sync-protocol", version = "0.1.0" }
 argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
 blake3 = { version = "1", features = ["zeroize"] }
 chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc", "zeroize"] }
-# The internal recipient prototype uses the X-Wing KEM with HKDF-SHA256.
-hpke = { version = "=0.15.1", default-features = false, features = ["alloc", "getrandom", "x25519", "chacha", "mlkem"] }
+# Phase 3 operation signatures. Exact on first adoption; no hazmat, batch,
+# serialization, key-file, or RNG feature enters the protocol build.
+ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["fast", "zeroize"] }
+# Phase 4 wraps one collection key with the frozen RFC 9180 profile. Exact on
+# first adoption; no PQ, NIST-curve, AES, serialization, or KAT feature.
+hpke = { version = "=0.15.1", default-features = false, features = ["alloc", "getrandom", "x25519", "chacha"] }
 # Phase 3 portable key agreement. Exact on first adoption; randomness stays in
 # chur-crypto and persisted bytes use Chur's canonical codec.
 x25519-dalek = { version = "=3.0.0", default-features = false, features = ["static_secrets", "zeroize"] }
-ml-dsa = { version = "=0.1.2", default-features = false, features = ["alloc", "zeroize"] }
 getrandom = "0.4"
 # The boot clock of the password-attempt delay, PASSWORD_PROFILE.md section 11.
 # Already in the production graph through getrandom and cpufeatures; the

@@ -1,25 +1,23 @@
 //! The fixed collection grant of `docs/sync/COLLECTION_GRANTS.md`.
 
 use chur_core::{ChurStatus, Error, Id, Result, ensure};
-use chur_crypto::post_quantum::{
-    ENCAP_LEN as ENCAPSULATED_KEY_LEN, RECIPIENT_LEN, SIGNATURE_LEN, VERIFY_LEN,
-    validate_encapsulation, validate_recipient,
-};
 use chur_crypto::secret::Key;
 use chur_crypto::{commit::commit, tuple::tag};
 use chur_format::codec::{Reader, Writer};
 use hpke::aead::ChaCha20Poly1305;
 use hpke::kdf::HkdfSha256;
-use hpke::kem::XWing;
+use hpke::kem::X25519HkdfSha256;
 use hpke::{Deserializable, Kem as KemTrait, OpModeR, OpModeS, Serializable};
 use zeroize::Zeroizing;
 
-use crate::identity::{DeviceIdentity, HPKE_SUITE_V2, SIGNING_SUITE_V2};
-use crate::operation::PROTOCOL_VERSION_V2;
-use crate::operation::{DeviceSigningKey, verify_device_signature};
+use crate::identity::DeviceIdentity;
+use crate::operation::{DeviceSigningKey, verify_ed25519};
 
 const KEY_ID_LEN: usize = 16;
+const HPKE_PROFILE_V1: u16 = 1;
+const ENCAPSULATED_KEY_LEN: usize = 32;
 const WRAPPED_COLLECTION_KEY_LEN: usize = 48;
+const SIGNATURE_LEN: usize = 64;
 
 /// One cumulative v1 sharing permission profile.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -70,7 +68,7 @@ pub struct CollectionGrant {
 
 impl CollectionGrant {
     /// Exact canonical encoded length.
-    pub const LEN: usize = 165 + ENCAPSULATED_KEY_LEN + WRAPPED_COLLECTION_KEY_LEN + SIGNATURE_LEN;
+    pub const LEN: usize = 309;
 
     /// Seals one collection key to one recipient device.
     #[expect(
@@ -85,7 +83,7 @@ impl CollectionGrant {
         collection_membership_generation: u64,
         recipient_identity_vault_id: Id,
         recipient_device_id: Id,
-        recipient_hpke_public_key: &[u8; RECIPIENT_LEN],
+        recipient_hpke_public_key: &[u8; 32],
         sender_device_id: Id,
         permissions: PermissionProfile,
         sender_membership_generation: u64,
@@ -111,7 +109,7 @@ impl CollectionGrant {
         let context = grant.context_bytes();
         let recipient_public_key = recipient_public_key(recipient_hpke_public_key)?;
         let (encapsulated_key, wrapped_collection_key) =
-            hpke::single_shot_seal::<ChaCha20Poly1305, HkdfSha256, XWing>(
+            hpke::single_shot_seal::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>(
                 &OpModeS::Base,
                 &recipient_public_key,
                 &grant_info(&context),
@@ -146,14 +144,14 @@ impl CollectionGrant {
         collection_membership_generation: u64,
         recipient_identity_vault_id: Id,
         recipient_device_id: Id,
-        recipient_hpke_public_key: &[u8; RECIPIENT_LEN],
+        recipient_hpke_public_key: &[u8; 32],
         sender_device_id: Id,
         permissions: PermissionProfile,
         sender_membership_generation: u64,
         created_sequence: u64,
         collection_key: &Key,
         sender_signing_key: &DeviceSigningKey,
-        ephemeral_ikm: [u8; 64],
+        ephemeral_ikm: [u8; 32],
     ) -> Result<Self> {
         let grant = Self::unsigned(
             grant_id,
@@ -173,7 +171,7 @@ impl CollectionGrant {
         let context = grant.context_bytes();
         let mut rng = FixedTestRng::new(ephemeral_ikm);
         let (encapsulated_key, wrapped_collection_key) =
-            hpke::single_shot_seal_with_rng::<ChaCha20Poly1305, HkdfSha256, XWing>(
+            hpke::single_shot_seal_with_rng::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>(
                 &OpModeS::Base,
                 &recipient_public_key(recipient_hpke_public_key)?,
                 &grant_info(&context),
@@ -200,7 +198,7 @@ impl CollectionGrant {
         recipient_identity_vault_id: &Id,
         recipient_device_id: &Id,
         recipient_identity: &DeviceIdentity,
-        sender_signing_public_key: &[u8; VERIFY_LEN],
+        sender_signing_public_key: &[u8; 32],
     ) -> Result<Key> {
         ensure!(
             &self.recipient_identity_vault_id == recipient_identity_vault_id
@@ -215,28 +213,30 @@ impl CollectionGrant {
             "collection grant recipient identity or key identifier does not match"
         );
         self.verify_sender_signature(sender_signing_public_key)?;
-        let recipient_private_key =
-            <XWing as KemTrait>::PrivateKey::from_bytes(recipient_identity.hpke_secret_bytes())
+        let recipient_private_key = <X25519HkdfSha256 as KemTrait>::PrivateKey::from_bytes(
+            recipient_identity.hpke_secret_bytes(),
+        )
+        .map_err(|_| {
+            Error::new(
+                ChurStatus::AuthenticationFailed,
+                "recipient HPKE private key is invalid",
+            )
+        })?;
+        let encapsulated_key =
+            <X25519HkdfSha256 as KemTrait>::EncappedKey::from_bytes(&self.encapsulated_key)
                 .map_err(|_| {
                     Error::new(
-                        ChurStatus::AuthenticationFailed,
-                        "recipient HPKE private key is invalid",
+                        ChurStatus::ObjectCorrupt,
+                        "collection grant HPKE encapsulation is invalid",
                     )
                 })?;
-        let encapsulated_key = <XWing as KemTrait>::EncappedKey::from_bytes(&self.encapsulated_key)
-            .map_err(|_| {
-                Error::new(
-                    ChurStatus::ObjectCorrupt,
-                    "collection grant HPKE encapsulation is invalid",
-                )
-            })?;
         let context = self.context_bytes();
         // The HPKE plaintext is the collection key itself. It leaves the HPKE
         // library as a heap `Vec<u8>`, so it is zeroized on every drop path —
         // both when the key is copied out and when the length check fails —
         // instead of staying in freed-but-unwiped memory.
         let plaintext = Zeroizing::new(
-            hpke::single_shot_open::<ChaCha20Poly1305, HkdfSha256, XWing>(
+            hpke::single_shot_open::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>(
                 &OpModeR::Base,
                 &recipient_private_key,
                 &encapsulated_key,
@@ -260,11 +260,8 @@ impl CollectionGrant {
         Ok(Key::new(key))
     }
 
-    /// Verifies the sender key identifier and ML-DSA-65 signature.
-    pub fn verify_sender_signature(
-        &self,
-        sender_signing_public_key: &[u8; VERIFY_LEN],
-    ) -> Result<()> {
+    /// Verifies the sender key identifier and Ed25519 signature.
+    pub fn verify_sender_signature(&self, sender_signing_public_key: &[u8; 32]) -> Result<()> {
         ensure!(
             self.sender_signing_key_id
                 == signing_key_id(
@@ -275,7 +272,7 @@ impl CollectionGrant {
             AuthenticationFailed,
             "collection grant sender key identifier does not match"
         );
-        verify_device_signature(
+        verify_ed25519(
             sender_signing_public_key,
             &self.sender_signature,
             &self.signature_input(),
@@ -403,8 +400,8 @@ impl CollectionGrant {
     pub fn encode(&self) -> Vec<u8> {
         let mut writer = Writer::with_capacity(Self::LEN);
         writer
-            .u16(PROTOCOL_VERSION_V2)
-            .u16(HPKE_SUITE_V2)
+            .u16(1)
+            .u16(HPKE_PROFILE_V1)
             .id(&self.grant_id)
             .id(&self.source_vault_id)
             .id(&self.collection_id)
@@ -428,13 +425,13 @@ impl CollectionGrant {
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let mut reader = Reader::new(bytes, ChurStatus::NonCanonicalEncoding);
         ensure!(
-            reader.u16()? == PROTOCOL_VERSION_V2,
+            reader.u16()? == 1,
             UnsupportedVersion,
             "collection grant version is not supported"
         );
         ensure!(
-            reader.u16()? == HPKE_SUITE_V2,
-            UnsupportedSuite,
+            reader.u16()? == HPKE_PROFILE_V1,
+            UnsupportedVersion,
             "collection grant HPKE profile is not supported"
         );
         let grant_id = reader.id()?;
@@ -497,14 +494,14 @@ impl CollectionGrant {
             InvalidInput,
             "collection grant key identifier or encapsulation is zero"
         );
-        validate_encapsulation(&self.encapsulated_key)
+        Ok(())
     }
 
     fn context_bytes(&self) -> Vec<u8> {
         let mut writer = Writer::with_capacity(165);
         writer
-            .u16(PROTOCOL_VERSION_V2)
-            .u16(HPKE_SUITE_V2)
+            .u16(1)
+            .u16(HPKE_PROFILE_V1)
             .id(&self.grant_id)
             .id(&self.source_vault_id)
             .id(&self.collection_id)
@@ -522,8 +519,7 @@ impl CollectionGrant {
     }
 
     fn signature_input(&self) -> Vec<u8> {
-        let mut input =
-            Vec::with_capacity(tag::SHARING_COLLECTION_GRANT.len() + Self::LEN - SIGNATURE_LEN);
+        let mut input = Vec::with_capacity(tag::SHARING_COLLECTION_GRANT.len() + 245);
         input.extend_from_slice(tag::SHARING_COLLECTION_GRANT);
         input.extend_from_slice(&self.encode()[..Self::LEN - SIGNATURE_LEN]);
         input
@@ -545,7 +541,7 @@ impl CollectionGrant {
         permissions: PermissionProfile,
         sender_membership_generation: u64,
         created_sequence: u64,
-        recipient_hpke_public_key: &[u8; RECIPIENT_LEN],
+        recipient_hpke_public_key: &[u8; 32],
         sender_signing_key: &DeviceSigningKey,
     ) -> Result<Self> {
         Self::from_fields(
@@ -585,7 +581,7 @@ impl CollectionGrant {
         self.encapsulated_key = encapsulated_key.try_into().map_err(|_| {
             Error::new(
                 ChurStatus::InternalFailure,
-                "collection grant encapsulation has the wrong size",
+                "collection grant encapsulation is not 32 bytes",
             )
         })?;
         self.wrapped_collection_key = wrapped_collection_key.try_into().map_err(|_| {
@@ -600,9 +596,8 @@ impl CollectionGrant {
     }
 }
 
-fn recipient_public_key(bytes: &[u8; RECIPIENT_LEN]) -> Result<<XWing as KemTrait>::PublicKey> {
-    validate_recipient(bytes)?;
-    <XWing as KemTrait>::PublicKey::from_bytes(bytes).map_err(|_| {
+fn recipient_public_key(bytes: &[u8; 32]) -> Result<<X25519HkdfSha256 as KemTrait>::PublicKey> {
+    <X25519HkdfSha256 as KemTrait>::PublicKey::from_bytes(bytes).map_err(|_| {
         Error::new(
             ChurStatus::InvalidInput,
             "recipient HPKE public key is invalid",
@@ -610,15 +605,15 @@ fn recipient_public_key(bytes: &[u8; RECIPIENT_LEN]) -> Result<<XWing as KemTrai
     })
 }
 
-#[cfg(any(test, feature = "test-vectors"))]
+#[cfg(feature = "test-vectors")]
 pub(crate) struct FixedTestRng {
-    bytes: [u8; 64],
+    bytes: [u8; 32],
     offset: usize,
 }
 
-#[cfg(any(test, feature = "test-vectors"))]
+#[cfg(feature = "test-vectors")]
 impl FixedTestRng {
-    pub(crate) const fn new(bytes: [u8; 64]) -> Self {
+    pub(crate) const fn new(bytes: [u8; 32]) -> Self {
         Self { bytes, offset: 0 }
     }
 
@@ -630,7 +625,7 @@ impl FixedTestRng {
     }
 }
 
-#[cfg(any(test, feature = "test-vectors"))]
+#[cfg(feature = "test-vectors")]
 impl hpke::rand_core::TryRng for FixedTestRng {
     type Error = hpke::rand_core::Infallible;
 
@@ -652,7 +647,7 @@ impl hpke::rand_core::TryRng for FixedTestRng {
     }
 }
 
-#[cfg(any(test, feature = "test-vectors"))]
+#[cfg(feature = "test-vectors")]
 impl hpke::rand_core::TryCryptoRng for FixedTestRng {}
 
 fn grant_info(context: &[u8]) -> Vec<u8> {
@@ -670,32 +665,30 @@ fn validate_counter(value: u64, name: &'static str) -> Result<()> {
     Ok(())
 }
 
-/// Derives the v2 identifier of one ML-DSA-65 public key.
+/// Derives the v1 identifier of one Ed25519 public key.
 #[must_use]
 pub fn signing_key_id(
     identity_vault_id: &Id,
     device_id: &Id,
-    public_key: &[u8; VERIFY_LEN],
+    public_key: &[u8; 32],
 ) -> [u8; KEY_ID_LEN] {
     key_id(
         tag::IDENTITY_SIGNING_KEY_ID,
-        SIGNING_SUITE_V2,
         identity_vault_id,
         device_id,
         public_key,
     )
 }
 
-/// Derives the v2 identifier of one hybrid HPKE public key.
+/// Derives the v1 identifier of one X25519 HPKE public key.
 #[must_use]
 pub fn hpke_key_id(
     identity_vault_id: &Id,
     device_id: &Id,
-    public_key: &[u8; RECIPIENT_LEN],
+    public_key: &[u8; 32],
 ) -> [u8; KEY_ID_LEN] {
     key_id(
         tag::IDENTITY_HPKE_KEY_ID,
-        HPKE_SUITE_V2,
         identity_vault_id,
         device_id,
         public_key,
@@ -704,17 +697,16 @@ pub fn hpke_key_id(
 
 fn key_id(
     domain: &[u8],
-    suite: u16,
     identity_vault_id: &Id,
     device_id: &Id,
-    public_key: &[u8],
+    public_key: &[u8; 32],
 ) -> [u8; KEY_ID_LEN] {
     let commitment = commit(
         domain,
         &[
             identity_vault_id.as_bytes(),
             device_id.as_bytes(),
-            &suite.to_be_bytes(),
+            &HPKE_PROFILE_V1.to_be_bytes(),
             public_key,
         ],
     );
@@ -730,92 +722,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hybrid_hpke_matches_draft_05_appendix_a5() {
-        use chur_crypto::post_quantum::recipient_public;
-        use hpke::{aead::Aead, kdf::Kdf};
-
-        let vector: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../test-vectors/internal-pq/hpke-pq-05-a5.json"
-        ))
-        .unwrap();
-        let bytes = |field: &serde_json::Value| hex::decode(field.as_str().unwrap()).unwrap();
-        assert_eq!(vector["mode"], 0);
-        assert_eq!(vector["kem_id"], XWing::KEM_ID);
-        assert_eq!(vector["kdf_id"], HkdfSha256::KDF_ID);
-        assert_eq!(vector["aead_id"], ChaCha20Poly1305::AEAD_ID);
-
-        let (sk, pk) = XWing::derive_keypair(&bytes(&vector["ikmR"]));
-        let seed = Key::new(bytes(&vector["skRm"]).try_into().unwrap());
-        let public = bytes(&vector["pkRm"]).try_into().unwrap();
-        assert_eq!(sk.to_bytes().as_slice(), seed.expose());
-        assert_eq!(pk.to_bytes().as_slice(), &public);
-        assert_eq!(recipient_public(&seed).unwrap(), public);
-        let recipient = recipient_public_key(&public).unwrap();
-
-        let info = bytes(&vector["info"]);
-        let mut rng = FixedTestRng::new(bytes(&vector["ikmE"]).try_into().unwrap());
-        let (enc, mut sender) = hpke::setup_sender_with_rng::<ChaCha20Poly1305, HkdfSha256, XWing>(
-            &OpModeS::Base,
-            &recipient,
-            &info,
-            &mut rng,
-        )
-        .unwrap();
-        let expected_enc = bytes(&vector["enc"]).try_into().unwrap();
-        validate_encapsulation(&expected_enc).unwrap();
-        assert_eq!(enc.to_bytes().as_slice(), &expected_enc);
-        let secret = XWing::decap(&sk, None, &enc).unwrap();
-        assert_eq!(secret.0.as_slice(), bytes(&vector["shared_secret"]));
-        let mut receiver = hpke::setup_receiver::<ChaCha20Poly1305, HkdfSha256, XWing>(
-            &OpModeR::Base,
-            &sk,
-            &enc,
-            &info,
-        )
-        .unwrap();
-
-        for record in vector["encryptions"].as_array().unwrap() {
-            let (pt, aad, ct) = (
-                bytes(&record["pt"]),
-                bytes(&record["aad"]),
-                bytes(&record["ct"]),
-            );
-            assert_eq!(sender.seal(&pt, &aad).unwrap(), ct);
-            assert_eq!(receiver.open(&ct, &aad).unwrap(), pt);
-        }
-        for export in vector["exports"].as_array().unwrap() {
-            let context = bytes(&export["exporter_context"]);
-            let expected = bytes(&export["exported_value"]);
-            let mut output = vec![0; export["L"].as_u64().unwrap().try_into().unwrap()];
-            sender.export(&context, &mut output).unwrap();
-            assert_eq!(output, expected);
-            output.fill(0);
-            receiver.export(&context, &mut output).unwrap();
-            assert_eq!(output, expected);
-        }
-    }
-
-    #[test]
     fn key_purpose_separates_identical_public_bytes() {
         let vault_id = Id::new([1; 16]).expect("vault");
         let device_id = Id::new([2; 16]).expect("device");
         let public_key = [3; 32];
 
         assert_ne!(
-            key_id(
-                tag::IDENTITY_SIGNING_KEY_ID,
-                SIGNING_SUITE_V2,
-                &vault_id,
-                &device_id,
-                &public_key
-            ),
-            key_id(
-                tag::IDENTITY_HPKE_KEY_ID,
-                HPKE_SUITE_V2,
-                &vault_id,
-                &device_id,
-                &public_key
-            )
+            signing_key_id(&vault_id, &device_id, &public_key),
+            hpke_key_id(&vault_id, &device_id, &public_key)
         );
     }
 
@@ -840,9 +754,9 @@ mod tests {
             PermissionProfile::Contribute,
             11,
             12,
-            [13; ENCAPSULATED_KEY_LEN],
+            [13; 32],
             [14; 48],
-            [15; SIGNATURE_LEN],
+            [15; 64],
         )
         .expect("grant fields");
 
@@ -913,12 +827,7 @@ mod tests {
         )
         .expect("seal grant");
 
-        let ciphertext = 165 + ENCAPSULATED_KEY_LEN;
-        let signature = ciphertext + WRAPPED_COLLECTION_KEY_LEN;
-        let mut noncontributory = grant.encode();
-        noncontributory[ciphertext - 32..ciphertext].fill(0);
-        assert!(CollectionGrant::decode(&noncontributory).is_err());
-        for offset in [148, 165, ciphertext - 32, ciphertext, signature] {
+        for offset in [148, 165, 197, 245] {
             let mut modified = grant.encode();
             modified[offset] ^= if offset == 148 { 0x02 } else { 0x01 };
             let modified = CollectionGrant::decode(&modified).expect("canonical grant");
@@ -978,7 +887,7 @@ mod tests {
                 1,
                 &Key::new([10; 32]),
                 &sender,
-                [11; 64],
+                [11; 32],
             )
             .expect("grant")
             .encode()

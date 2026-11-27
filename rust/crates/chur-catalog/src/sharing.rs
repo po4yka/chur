@@ -1,6 +1,5 @@
 //! Durable collection-sharing membership and recipient key pins.
 
-use chur_crypto::post_quantum::{RECIPIENT_LEN, VERIFY_LEN};
 use std::collections::BTreeMap;
 
 use chur_core::{ChurStatus, Error, Id, Result, bail, ensure};
@@ -24,8 +23,8 @@ const VERIFIED: i64 = 2;
 type StoredStateRow = (Vec<u8>, i64, i64, Vec<u8>, i64);
 
 struct StoredPin {
-    signing_public_key: [u8; VERIFY_LEN],
-    hpke_public_key: [u8; RECIPIENT_LEN],
+    signing_public_key: [u8; 32],
+    hpke_public_key: [u8; 32],
     verification: RecipientVerification,
 }
 
@@ -428,8 +427,8 @@ pub fn verify_recipient_keys(
     collection_id: &Id,
     identity_vault_id: Id,
     device_id: Id,
-    signing_public_key: [u8; VERIFY_LEN],
-    hpke_public_key: [u8; RECIPIENT_LEN],
+    signing_public_key: [u8; 32],
+    hpke_public_key: [u8; 32],
 ) -> Result<CollectionMembershipState> {
     let current = load(db, collection_id)?.ok_or_else(|| {
         Error::new(
@@ -467,8 +466,8 @@ pub(crate) fn project_recipient_rotation(
     current: &CollectionMembershipState,
     identity_vault_id: Id,
     device_id: Id,
-    signing_public_key: [u8; VERIFY_LEN],
-    hpke_public_key: [u8; RECIPIENT_LEN],
+    signing_public_key: [u8; 32],
+    hpke_public_key: [u8; 32],
 ) -> Result<CollectionMembershipState> {
     let mut candidate = current.clone();
     candidate.rotate_recipient_keys(
@@ -988,7 +987,7 @@ fn check_head(transaction: &Transaction<'_>, current: &CollectionMembershipState
     Ok(())
 }
 
-fn fixed<const N: usize>(bytes: &[u8], context: &'static str) -> Result<[u8; N]> {
+fn fixed(bytes: &[u8], context: &'static str) -> Result<[u8; 32]> {
     bytes
         .try_into()
         .map_err(|_| Error::new(ChurStatus::CatalogCorrupt, context))
@@ -1036,15 +1035,10 @@ mod tests {
     fn accepted_membership_and_tofu_pin_replay_after_reopen() {
         let mut db = catalog();
         let source_key = DeviceSigningKey::from_seed([1; 32]);
-        let source_record = EnrollmentRecord::initial(
-            id(1),
-            id(2),
-            source_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([3; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("source enrollment")
-        .sign(&source_key);
+        let source_record =
+            EnrollmentRecord::initial(id(1), id(2), source_key.verifying_key(), [3; 32])
+                .expect("source enrollment")
+                .sign(&source_key);
         let source = MembershipState::bootstrap(&source_record).expect("source membership");
         provision(&mut db, id(1), id(4), 7).expect("provision sharing");
         let record = CollectionMembershipRecord::new(
@@ -1055,9 +1049,8 @@ mod tests {
             CollectionMembershipAction::Upsert(PermissionProfile::Read),
             id(5),
             id(6),
-            chur_crypto::post_quantum::IdentitySigner::from_seed(&[7; 32]).public(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([8; 32]))
-                .expect("test recipient key"),
+            [7; 32],
+            [8; 32],
             7,
             id(1),
             id(2),
@@ -1099,26 +1092,16 @@ mod tests {
         key: &DeviceSigningKey,
         generation: u64,
     ) -> MembershipState {
-        let initial = EnrollmentRecord::initial(
-            vault_id,
-            device_id,
-            key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([3; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("initial enrollment")
-        .sign(key);
+        let initial = EnrollmentRecord::initial(vault_id, device_id, key.verifying_key(), [3; 32])
+            .expect("initial enrollment")
+            .sign(key);
         let mut state = MembershipState::bootstrap(&initial).expect("membership");
         for next in 2..=generation {
             let extra = EnrollmentRecord::new(
                 vault_id,
                 Id::new([100 + u8::try_from(next).expect("small"); 16]).expect("id"),
-                chur_crypto::post_quantum::IdentitySigner::from_seed(
-                    &[u8::try_from(next).expect("small"); 32],
-                )
-                .public(),
-                chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([4; 32]))
-                    .expect("test recipient key"),
+                [u8::try_from(next).expect("small"); 32],
+                [4; 32],
                 next,
                 device_id,
                 next,
@@ -1158,9 +1141,8 @@ mod tests {
             CollectionMembershipAction::Upsert(PermissionProfile::Read),
             id(5),
             id(6),
-            chur_crypto::post_quantum::IdentitySigner::from_seed(&[7; 32]).public(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([8; 32]))
-                .expect("test recipient key"),
+            [7; 32],
+            [8; 32],
             7,
             id(1),
             id(2),
@@ -1247,8 +1229,7 @@ mod tests {
             id(20),
             id(21),
             delegate_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([22; 32]))
-                .expect("test recipient key"),
+            [22; 32],
             7,
             id(1),
             id(2),
@@ -1309,9 +1290,8 @@ mod tests {
             CollectionMembershipAction::Upsert(PermissionProfile::Read),
             id(30),
             id(31),
-            chur_crypto::post_quantum::IdentitySigner::from_seed(&[32; 32]).public(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([33; 32]))
-                .expect("test recipient key"),
+            [32; 32],
+            [33; 32],
             7,
             id(20),
             id(21),
@@ -1346,15 +1326,10 @@ mod tests {
     fn verified_key_replacement_and_revocation_replay() {
         let mut db = catalog();
         let source_key = DeviceSigningKey::from_seed([1; 32]);
-        let source_record = EnrollmentRecord::initial(
-            id(1),
-            id(2),
-            source_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([3; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("source enrollment")
-        .sign(&source_key);
+        let source_record =
+            EnrollmentRecord::initial(id(1), id(2), source_key.verifying_key(), [3; 32])
+                .expect("source enrollment")
+                .sign(&source_key);
         let source = MembershipState::bootstrap(&source_record).expect("source membership");
         db.connection()
             .execute(
@@ -1371,9 +1346,8 @@ mod tests {
             CollectionMembershipAction::Upsert(PermissionProfile::Contribute),
             id(5),
             id(6),
-            chur_crypto::post_quantum::IdentitySigner::from_seed(&[7; 32]).public(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([8; 32]))
-                .expect("test recipient key"),
+            [7; 32],
+            [8; 32],
             7,
             id(1),
             id(2),
@@ -1384,16 +1358,8 @@ mod tests {
         .sign(&source_key);
         accept_membership(&mut db, &first, &source).expect("accept first membership");
 
-        verify_recipient_keys(
-            &mut db,
-            &id(4),
-            id(5),
-            id(6),
-            chur_crypto::post_quantum::IdentitySigner::from_seed(&[10; 32]).public(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([11; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("verify replacement");
+        verify_recipient_keys(&mut db, &id(4), id(5), id(6), [10; 32], [11; 32])
+            .expect("verify replacement");
         let replacement = CollectionMembershipRecord::new(
             id(1),
             id(4),
@@ -1402,9 +1368,8 @@ mod tests {
             CollectionMembershipAction::Upsert(PermissionProfile::ManageMembers),
             id(5),
             id(6),
-            chur_crypto::post_quantum::IdentitySigner::from_seed(&[10; 32]).public(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([11; 32]))
-                .expect("test recipient key"),
+            [10; 32],
+            [11; 32],
             7,
             id(1),
             id(2),
@@ -1422,9 +1387,8 @@ mod tests {
             CollectionMembershipAction::Revoke,
             id(5),
             id(6),
-            chur_crypto::post_quantum::IdentitySigner::from_seed(&[10; 32]).public(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([11; 32]))
-                .expect("test recipient key"),
+            [10; 32],
+            [11; 32],
             8,
             id(1),
             id(2),
@@ -1460,15 +1424,10 @@ mod tests {
     fn grant_storage_is_idempotent_and_rejects_an_identifier_conflict() {
         let mut db = catalog();
         let source_key = DeviceSigningKey::from_seed([1; 32]);
-        let source_record = EnrollmentRecord::initial(
-            id(1),
-            id(2),
-            source_key.verifying_key(),
-            chur_crypto::post_quantum::recipient_public(&chur_crypto::Key::new([3; 32]))
-                .expect("test recipient key"),
-        )
-        .expect("source enrollment")
-        .sign(&source_key);
+        let source_record =
+            EnrollmentRecord::initial(id(1), id(2), source_key.verifying_key(), [3; 32])
+                .expect("source enrollment")
+                .sign(&source_key);
         let source = MembershipState::bootstrap(&source_record).expect("source membership");
         provision(&mut db, id(1), id(4), 7).expect("provision sharing");
         let recipient = DeviceIdentity::from_seeds([5; 32], [6; 32]);

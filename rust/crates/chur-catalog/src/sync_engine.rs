@@ -1,11 +1,9 @@
 //! Locked ciphertext staging and unlocked inbound processing.
 
-use chur_core::limits::sync as bounds;
-use chur_core::{ChurStatus, Error, Id, Result, ensure};
+use chur_core::{ChurStatus, Error, Id, Result};
 use chur_crypto::Key;
 use chur_crypto::commit;
 use chur_sync_protocol::checkpoint::Checkpoint;
-use chur_sync_protocol::operation::Operation;
 use chur_sync_protocol::operation_log::{ApplyOutcome, CheckpointOutcome};
 
 use crate::paths::VaultRoot;
@@ -38,8 +36,8 @@ pub struct ProcessReport {
     /// Stable status of the first rejected record, or of the first fork or
     /// rollback verdict when the pass reached one.
     ///
-    /// A verdict replaces an earlier status of another kind. A server can
-    /// stage a record with a bad signature ahead of the forked
+    /// A verdict replaces an earlier status of another kind. Staging accepts
+    /// any bytes, so a server could otherwise place junk ahead of the forked
     /// record and hide the verdict behind its rejection. The engine freezes the
     /// chain and drops the record, so no later pass reports the fork again,
     /// and `ERROR_MODEL.md` "Wire and persistence compatibility" says a server
@@ -66,90 +64,18 @@ pub fn stage_inbound_records<'a>(
     staged_at_ms: u64,
     records: impl IntoIterator<Item = &'a [u8]>,
 ) -> Result<()> {
-    let mut framed = Vec::new();
-    let mut available = bounds::RESPONSE_BYTES_MAX;
-    for record in records {
-        ensure!(
-            framed.len() < bounds::RESPONSE_OPERATIONS_MAX && record.len() <= available,
-            ResourceLimitExceeded,
-            "staged page exceeds the sync response limit"
-        );
-        available -= record.len();
-        match kind {
-            StagedKind::Operation => {
-                Operation::decode(record)?;
-            }
-            StagedKind::Checkpoint => {
-                Checkpoint::decode(record)?;
-            }
-        }
-        let mut bytes = Vec::with_capacity(record.len() + 1);
-        bytes.push(kind as u8);
-        bytes.extend_from_slice(record);
-        let digest = commit::commit(STAGED_RECORD_TAG, &[&bytes]);
-        framed.push((Id::from_slice(&digest[..16])?, bytes));
-    }
-    ensure!(!framed.is_empty(), InvalidInput, "staged page is empty");
+    let framed = records
+        .into_iter()
+        .map(|record| {
+            let mut framed = Vec::with_capacity(record.len() + 1);
+            framed.push(kind as u8);
+            framed.extend_from_slice(record);
+            let digest = commit::commit(STAGED_RECORD_TAG, &[&framed]);
+            let id = Id::from_slice(&digest[..16])?;
+            Ok((id, framed))
+        })
+        .collect::<Result<Vec<_>>>()?;
     LockedStaging::open(root.sync_inbox(&vault_id))?.stage_many(staged_at_ms, framed)
-}
-
-/// Checks that the authenticated peer signed a checkpoint whose prefixes have arrived.
-/// An accepted checkpoint can also name a future floor. That floor alone cannot
-/// confirm that this device has received the peer's history.
-pub fn confirm_peer_history(db: &CatalogDb, peer: &Id, bytes: &[u8]) -> Result<()> {
-    let checkpoint = Checkpoint::decode(bytes)?;
-    let membership = sync_membership::load(db)?.ok_or_else(|| {
-        Error::new(
-            ChurStatus::AuthenticationFailed,
-            "peer membership is absent",
-        )
-    })?;
-    ensure!(
-        checkpoint.vault_id() == membership.vault_id()
-            && checkpoint.issuer_device_id() == peer
-            && membership.is_active(peer),
-        AuthenticationFailed,
-        "checkpoint does not identify the active peer"
-    );
-    let issuer = membership.device(peer).ok_or_else(|| {
-        Error::new(
-            ChurStatus::AuthenticationFailed,
-            "checkpoint issuer is unknown",
-        )
-    })?;
-    ensure!(
-        issuer
-            .signing_public_keys()
-            .any(|key| checkpoint.verify_signature(key).is_ok()),
-        AuthenticationFailed,
-        "checkpoint signature did not verify"
-    );
-    require_checkpoint_prefixes(db, &membership, &checkpoint)
-}
-
-pub(crate) fn require_checkpoint_prefixes(
-    db: &CatalogDb,
-    membership: &chur_sync_protocol::state::MembershipState,
-    checkpoint: &Checkpoint,
-) -> Result<()> {
-    for head in checkpoint.heads() {
-        if sync_log::above_revocation_cutoff(membership, head.device_id(), head.device_sequence()) {
-            continue;
-        }
-        let (operation, _) = sync_log::operation_at(db, head.device_id(), head.device_sequence())?
-            .ok_or_else(|| {
-                Error::new(
-                    ChurStatus::RecoveryRequired,
-                    "checkpoint history is incomplete",
-                )
-            })?;
-        ensure!(
-            operation.digest() == *head.operation_digest(),
-            SyncHeadRollback,
-            "checkpoint differs from delivered history"
-        );
-    }
-    Ok(())
 }
 
 /// Validates and applies retained records after the vault unlocks.

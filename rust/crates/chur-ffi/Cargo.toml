@@ -8,26 +8,21 @@ repository.workspace = true
 description = "Stable C ABI data plane and ABI handshake for mobile hosts."
 
 [lib]
-path = "src/boundary.rs"
 crate-type = ["rlib", "cdylib", "staticlib"]
-
-[features]
-default = ["vault"]
-vault = ["dep:chur-format", "dep:chur-catalog", "dep:chur-media", "dep:chur-sync-protocol", "dep:zeroize", "dep:sha2", "dep:libc"]
 
 [dependencies]
 chur-core.workspace = true
 chur-crypto.workspace = true
-chur-format = { workspace = true, optional = true }
-chur-catalog = { workspace = true, optional = true }
-chur-media = { workspace = true, optional = true }
-chur-sync-protocol = { workspace = true, optional = true }
+chur-format.workspace = true
+chur-catalog.workspace = true
+chur-media.workspace = true
+chur-sync-protocol.workspace = true
 
-zeroize = { workspace = true, optional = true }
-sha2 = { workspace = true, optional = true }
+zeroize.workspace = true
+sha2.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-libc = { workspace = true, optional = true }
+libc.workspace = true
 
 # `chur-ffi` is the one crate permitted to contain `unsafe`. The workspace sets
 # `unsafe_code = "forbid"`, which no inner `allow` or `expect` can lift, and the

@@ -1,0 +1,638 @@
+diff --git a/shared/app/src/commonMain/kotlin/dev/po4yka/chur/app/AbiGate.kt b/shared/app/src/commonMain/kotlin/dev/po4yka/chur/app/AbiGate.kt
+index c23e72ac..5aa82f0d 100644
+--- a/shared/app/src/commonMain/kotlin/dev/po4yka/chur/app/AbiGate.kt
++++ b/shared/app/src/commonMain/kotlin/dev/po4yka/chur/app/AbiGate.kt
+@@ -66,7 +66,7 @@ public sealed interface GateResult {
+ }
+ 
+ /** The major ABI version this application was built against. */
+-public const val EXPECTED_ABI_MAJOR: UInt = 7u
++public const val EXPECTED_ABI_MAJOR: UInt = 8u
+ 
+ /**
+  * The oldest minor ABI version whose functions this application calls.
+@@ -86,6 +86,9 @@ public const val FLAVOR_DEBUG_ASSERTIONS: UInt = 2u
+ /** Build-flavor bit: test hooks are compiled in. */
+ public const val FLAVOR_TEST_HOOKS: UInt = 4u
+ 
++/** Unreviewed wire profile for internal evaluation. */
++public const val FLAVOR_INTERNAL_PQ: UInt = 8u
++
+ /**
+  * Decides whether a library may be called.
+  *
+@@ -118,7 +121,8 @@ public fun gate(handshake: NativeHandshake, releaseApplication: Boolean): GateRe
+         // Both bits, or neither. Neither is the panic fallback of ADR-0037.
+         return refuse(GateResult.Reason.BUILD_FLAVOR)
+     }
+-    if (releaseApplication && (debug || testHooks)) {
++    val internalPq = handshake.buildFlavor and FLAVOR_INTERNAL_PQ != 0u
++    if (releaseApplication && (debug || testHooks || internalPq)) {
+         return refuse(GateResult.Reason.BUILD_FLAVOR)
+     }
+     // An unknown capability bit is ignored and never enables behaviour, so the
+diff --git a/shared/app/src/commonMain/kotlin/dev/po4yka/chur/app/ChurController.kt b/shared/app/src/commonMain/kotlin/dev/po4yka/chur/app/ChurController.kt
+index 9ce11896..532b2375 100644
+--- a/shared/app/src/commonMain/kotlin/dev/po4yka/chur/app/ChurController.kt
++++ b/shared/app/src/commonMain/kotlin/dev/po4yka/chur/app/ChurController.kt
+@@ -16,8 +16,8 @@ import dev.po4yka.chur.ffi.SharingMember
+ import dev.po4yka.chur.ffi.SharingOverview
+ import dev.po4yka.chur.ffi.SharingPermission
+ import dev.po4yka.chur.ffi.SharingRecipient
+-import dev.po4yka.chur.ffi.fromHex
+-import dev.po4yka.chur.ffi.toHex
++import dev.po4yka.chur.ffi.decodeDevicePairingCode
++import dev.po4yka.chur.ffi.encodeDevicePairingCode
+ import dev.po4yka.chur.ffi.QueryScope
+ import dev.po4yka.chur.ffi.QuerySort
+ import dev.po4yka.chur.sync.PeerSyncCoordinator
+@@ -1787,24 +1787,24 @@ class ChurController(
+     fun prepareDevicePairing() = pairingAction {
+         val request = (sync ?: return@pairingAction).prepareDevicePairing()
+         _devicePairing.value = _devicePairing.value.copy(
+-            requestCode = request.request.toHex().chunked(32).joinToString("\n"),
++            requestCode = encodeDevicePairingCode(request.request),
+             requestFingerprint = request.fingerprint,
+         )
+     }
+-    fun inspectDevicePairing(requestHex: String) = pairingAction {
+-        val preview = (sync ?: return@pairingAction).inspectDevicePairing(pairingRequestBytes(requestHex))
++    fun inspectDevicePairing(requestCode: String) = pairingAction {
++        val preview = (sync ?: return@pairingAction).inspectDevicePairing(decodeDevicePairingCode(requestCode))
+         _pairingApproval.value?.fill(0)
+         _pairingApproval.value = null
+         _devicePairing.value = _devicePairing.value.copy(
+-            inspectedRequestCode = requestHex, inspectedFingerprint = preview.fingerprint, approvalReady = false,
++            inspectedRequestCode = requestCode, inspectedFingerprint = preview.fingerprint, approvalReady = false,
+         )
+     }
+-    fun approveDevicePairing(requestHex: String, expectedFingerprint: String) = pairingAction {
++    fun approveDevicePairing(requestCode: String, expectedFingerprint: String) = pairingAction {
+         val engine = sync ?: return@pairingAction
+         val preview = _devicePairing.value
+-        if (preview.inspectedRequestCode != requestHex || preview.inspectedFingerprint != expectedFingerprint)
++        if (preview.inspectedRequestCode != requestCode || preview.inspectedFingerprint != expectedFingerprint)
+             throw ChurFailure(ChurStatus.AUTHENTICATION_FAILED, "compare the device fingerprint again")
+-        val approval = withContext(Dispatchers.Default) { engine.approveDevicePairing(pairingRequestBytes(requestHex), expectedFingerprint) }
++        val approval = withContext(Dispatchers.Default) { engine.approveDevicePairing(decodeDevicePairingCode(requestCode), expectedFingerprint) }
+         _pairingApproval.value?.fill(0)
+         _pairingApproval.value = approval
+         _devicePairing.value = _devicePairing.value.copy(approvalReady = true)
+@@ -1839,13 +1839,7 @@ class ChurController(
+             }
+         }
+     }
+-    private fun pairingRequestBytes(requestHex: String): ByteArray {
+-        val compact = requestHex.filterNot(Char::isWhitespace)
+-        if (compact.length != 420) throw ChurFailure(ChurStatus.INVALID_INPUT, "invalid device request length")
+-        return try { compact.fromHex() } catch (_: IllegalArgumentException) {
+-            throw ChurFailure(ChurStatus.INVALID_INPUT, "invalid hexadecimal device request")
+-        }
+-    }
++
+ 
+     /**
+      * Stages a recovery slot and shows the phrase once, after the device
+diff --git a/shared/app/src/commonMain/kotlin/dev/po4yka/chur/app/vault/DevicePairingCard.kt b/shared/app/src/commonMain/kotlin/dev/po4yka/chur/app/vault/DevicePairingCard.kt
+index f75fc008..0f7e9246 100644
+--- a/shared/app/src/commonMain/kotlin/dev/po4yka/chur/app/vault/DevicePairingCard.kt
++++ b/shared/app/src/commonMain/kotlin/dev/po4yka/chur/app/vault/DevicePairingCard.kt
+@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
+ import androidx.compose.foundation.layout.Row
+ import androidx.compose.foundation.layout.fillMaxWidth
+ import androidx.compose.foundation.layout.padding
++import dev.po4yka.chur.ffi.PAIRING_CODE_MAX_CHARS
+ import dev.po4yka.chur.app.rememberSensitiveCopy
+ import androidx.compose.material3.TextButton
+ import androidx.compose.material3.Button
+@@ -84,8 +85,7 @@ internal fun DevicePairingCard(
+                 Button(onClick = onPrepare, enabled = !busy) { Text("Create pairing request") }
+                 state.requestFingerprint?.let { Text("New device fingerprint: $it") }
+                 state.requestCode?.let { code ->
+-                    Text("Send this request to your connected device:")
+-                    Text(code, style = MaterialTheme.typography.bodySmall)
++                    Text("Copy the request and send it to your connected device.")
+                     TextButton(onClick = { copy("Chur pairing request", code) }) { Text("Copy request") }
+                 }
+                 Text("Open the encrypted approval file from your connected device then connect directly to finish pairing.")
+@@ -108,7 +108,7 @@ internal fun DevicePairingCard(
+                 OutlinedTextField(
+                     colors = churOutlinedTextFieldColors(),
+                     value = request,
+-                    onValueChange = { request = it.take(PAIRING_CODE_MAX_CHARS) },
++                    onValueChange = { if (it.length <= PAIRING_CODE_MAX_CHARS) request = it },
+                     label = { Text("New device pairing request") },
+                     keyboardOptions = privateKeyboardOptions(),
+                     modifier = Modifier.fillMaxWidth(),
+@@ -139,6 +139,3 @@ internal fun DevicePairingCard(
+         }
+     }
+ }
+-
+-/** Bounds pasted public codes before native canonical decoding. */
+-internal const val PAIRING_CODE_MAX_CHARS = 1_024
+diff --git a/shared/app/src/commonTest/kotlin/dev/po4yka/chur/app/AbiGateTest.kt b/shared/app/src/commonTest/kotlin/dev/po4yka/chur/app/AbiGateTest.kt
+index 650b69ca..ef3e3242 100644
+--- a/shared/app/src/commonTest/kotlin/dev/po4yka/chur/app/AbiGateTest.kt
++++ b/shared/app/src/commonTest/kotlin/dev/po4yka/chur/app/AbiGateTest.kt
+@@ -16,7 +16,7 @@ import kotlin.test.assertTrue
+  */
+ class AbiGateTest {
+     private fun handshake(
+-        major: UInt = 7u,
++        major: UInt = 8u,
+         minor: UInt = REQUIRED_ABI_MINOR,
+         capabilities: ULong = 0u,
+         objectMin: UInt = 1u,
+@@ -33,9 +33,17 @@ class AbiGateTest {
+         assertEquals(0uL, result.capabilities)
+     }
+ 
++    @Test
++    fun prototype_library_is_available_only_to_an_internal_application() {
++        val prototype = handshake(flavor = FLAVOR_RELEASE or FLAVOR_INTERNAL_PQ)
++        assertIs<GateResult.Compatible>(gate(prototype, releaseApplication = false))
++        val refusal = assertIs<GateResult.Incompatible>(gate(prototype, releaseApplication = true))
++        assertEquals(GateResult.Reason.BUILD_FLAVOR, refusal.reason)
++    }
++
+     @Test
+     fun another_major_version_is_refused_terminally() {
+-        for (major in listOf(0u, 1u, 2u, 3u, 4u, 5u, 6u, UInt.MAX_VALUE)) {
++        for (major in listOf(0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, UInt.MAX_VALUE)) {
+             val result = gate(handshake(major = major), releaseApplication = true)
+             assertIs<GateResult.Incompatible>(result)
+             assertEquals(ChurStatus.ABI_INCOMPATIBLE, result.status)
+diff --git a/shared/core-ffi/src/androidHostTest/kotlin/dev/po4yka/chur/ffi/ChurVaultHostTest.kt b/shared/core-ffi/src/androidHostTest/kotlin/dev/po4yka/chur/ffi/ChurVaultHostTest.kt
+index 3d9e20ef..4e1c706d 100644
+--- a/shared/core-ffi/src/androidHostTest/kotlin/dev/po4yka/chur/ffi/ChurVaultHostTest.kt
++++ b/shared/core-ffi/src/androidHostTest/kotlin/dev/po4yka/chur/ffi/ChurVaultHostTest.kt
+@@ -204,9 +204,9 @@ class ChurVaultHostTest {
+ 
+         assertEquals(16, first.vaultId.size)
+         assertEquals(16, first.deviceId.size)
+-        assertEquals(32, first.signingPublicKey.size)
+-        assertEquals(32, first.hpkePublicKey.size)
+-        assertEquals(49, first.fingerprint.length)
++        assertEquals(1952, first.signingPublicKey.size)
++        assertEquals(1216, first.hpkePublicKey.size)
++        assertEquals(79, first.fingerprint.length)
+         assertTrue(first.enrollment.isNotEmpty())
+         assertTrue(first.initialOperation.isNotEmpty())
+         assertContentEquals(first.vaultId, replay.vaultId)
+@@ -245,8 +245,8 @@ class ChurVaultHostTest {
+     @Test
+     fun the_handshake_matches_the_frozen_abi() {
+         val handshake = ChurVault.handshake()
+-        assertEquals(7, handshake.major)
+-        assertEquals(4, handshake.minor, "staged sync pages use ABI 7.4")
++        assertEquals(8, handshake.major)
++        assertEquals(4, handshake.minor, "the internal profile exposes ABI 8.4")
+         assertEquals(1, handshake.objectFormatMin)
+         assertEquals(2, handshake.objectFormatMax)
+         assertTrue(handshake.capabilities and 0b0000_0010L != 0L, "the reader is declared")
+diff --git a/shared/core-ffi/src/androidHostTest/kotlin/dev/po4yka/chur/ffi/SyncHeadsHostTest.kt b/shared/core-ffi/src/androidHostTest/kotlin/dev/po4yka/chur/ffi/SyncHeadsHostTest.kt
+index 548e823a..70bf7dd5 100644
+--- a/shared/core-ffi/src/androidHostTest/kotlin/dev/po4yka/chur/ffi/SyncHeadsHostTest.kt
++++ b/shared/core-ffi/src/androidHostTest/kotlin/dev/po4yka/chur/ffi/SyncHeadsHostTest.kt
+@@ -21,7 +21,10 @@ class SyncHeadsHostTest {
+             assertContentEquals(identity.deviceId, first.deviceId)
+             assertEquals(1uL, first.sequence)
+ 
+-            ChurVault.stageSync(runtime, identity.vaultId, SyncRecordKind.OPERATION, 1, byteArrayOf(1, 2, 3))
++            val legacy = assertFailsWith<ChurFailure> {
++                ChurVault.stageSync(runtime, identity.vaultId, SyncRecordKind.OPERATION, 1, byteArrayOf(0, 1, 3))
++            }
++            assertEquals(ChurStatus.UNSUPPORTED_VERSION, legacy.status)
+             val badPage = byteArrayOf(0, 0, 0, 1, 4, 0, 0, 0, 2, 5)
+             val truncated = assertFailsWith<ChurFailure> {
+                 ChurVault.stageSync(runtime, identity.vaultId, SyncRecordKind.OPERATION_PAGE, 1, badPage)
+@@ -29,10 +32,14 @@ class SyncHeadsHostTest {
+             assertEquals(ChurStatus.INVALID_INPUT, truncated.status)
+             val page = byteArrayOf(0, 0, 0, 1, 4, 0, 0, 0, 1, 5)
+             repeat(2) {
+-                ChurVault.stageSync(runtime, identity.vaultId, SyncRecordKind.OPERATION_PAGE, 1, page)
++                val invalid = assertFailsWith<ChurFailure> {
++                    ChurVault.stageSync(runtime, identity.vaultId, SyncRecordKind.OPERATION_PAGE, 1, page)
++                }
++                assertEquals(ChurStatus.NON_CANONICAL_ENCODING, invalid.status)
+             }
+             val report = ChurVault.processSync(session, 2)
+-            assertEquals(3L, report.rejected)
++            assertEquals(0L, report.rejected)
++            assertEquals(0L, report.pending)
+             val after = ChurVault.syncHeads(session).single()
+             assertContentEquals(first.deviceId, after.deviceId)
+             assertEquals(first.sequence, after.sequence)
+diff --git a/shared/core-ffi/src/commonMain/kotlin/dev/po4yka/chur/ffi/ChurVault.kt b/shared/core-ffi/src/commonMain/kotlin/dev/po4yka/chur/ffi/ChurVault.kt
+index 6fd954fe..1197474d 100644
+--- a/shared/core-ffi/src/commonMain/kotlin/dev/po4yka/chur/ffi/ChurVault.kt
++++ b/shared/core-ffi/src/commonMain/kotlin/dev/po4yka/chur/ffi/ChurVault.kt
+@@ -291,13 +291,13 @@ object ChurVault {
+         val result = objectKeyCall(session, collectionId + objectId, ChurNative::objectKeyRequest)
+         require(result.isNotEmpty() && (result[0] == 0.toByte() || result[0] == 1.toByte()))
+         if (result[0] == 0.toByte()) { require(result.size == 1); return null }
+-        require(result.size == 227)
++        require(result.size == 1 + OBJECT_PREKEY_LENGTH)
+         return result.copyOfRange(1, result.size)
+     }
+ 
+ 
+     fun objectKeyAccept(session: Long, packageBytes: ByteArray, grant: ByteArray) {
+-        require(packageBytes.size <= 16_776_000 && grant.size == 346)
++        require(packageBytes.size <= SHARING_BUNDLE_CAPACITY - OBJECT_GRANT_LENGTH - 8 && grant.size == OBJECT_GRANT_LENGTH)
+         fun length(value: Int) = byteArrayOf((value ushr 24).toByte(), (value ushr 16).toByte(),
+             (value ushr 8).toByte(), value.toByte())
+         objectKeyCall(session, length(packageBytes.size) + packageBytes + length(grant.size) + grant,
+@@ -309,7 +309,7 @@ object ChurVault {
+         call: (Long, ChurBuffer, Int, ChurBuffer, IntArray) -> Int,
+     ): ByteArray = withChurBuffer(bytes.size) { input ->
+         input.copyIn(bytes)
+-        withChurBuffer(512) { output ->
++        withChurBuffer(maxOf(1 + OBJECT_PREKEY_LENGTH, OBJECT_GRANT_LENGTH)) { output ->
+             val written = IntArray(1)
+             ChurFailure.check(call(session, input, bytes.size, output, written), "object key delivery")
+             output.copyOut(written[0])
+@@ -455,16 +455,16 @@ object ChurVault {
+         pairingCall(session, input, ChurNative::peerCall, when (input.firstOrNull()?.toInt()) {
+             1 -> 34
+             5 -> 4 * 1024 * 1024 + 1
+-            8 -> 512 * 1024
++            8 -> 2 * 1024 * 1024
+             9 -> 16
+-            10 -> 8_192
+-            11 -> 346
++            10 -> PAIRING_CREDENTIALS_CAPACITY
++            11 -> OBJECT_GRANT_LENGTH
+             12 -> 1024 * 1024
+             else -> 1
+         })
+ 
+     fun prepareDevicePairing(session: Long): DevicePairingRequest =
+-        decodeDevicePairingRequest(pairingCall(session, byteArrayOf(), ChurNative::devicePairingPrepare, 512))
++        decodeDevicePairingRequest(pairingCall(session, byteArrayOf(), ChurNative::devicePairingPrepare, 8 * 1024))
+ 
+     fun inspectDevicePairing(session: Long, request: ByteArray): DevicePairingPreview =
+         decodeDevicePairingPreview(pairingCall(session, request, ChurNative::devicePairingInspect, 128))
+@@ -478,7 +478,7 @@ object ChurVault {
+     }
+ 
+     fun startDevicePairing(session: Long, approval: ByteArray): DevicePairingCredentials {
+-        val response = pairingCall(session, approval, ChurNative::devicePairingStart, 8_192)
++        val response = pairingCall(session, approval, ChurNative::devicePairingStart, PAIRING_CREDENTIALS_CAPACITY)
+         return try { decodeDevicePairingCredentials(response) } finally { response.fill(0) }
+     }
+ 
+@@ -500,7 +500,7 @@ object ChurVault {
+         session: Long,
+         input: ByteArray,
+         call: (Long, ChurBuffer, Int, ChurBuffer, IntArray) -> Int,
+-        outputCapacity: Int = 16 * 1024 * 1024 + 8_192,
++        outputCapacity: Int = 16 * 1024 * 1024 + 32 * 1024,
+     ): ByteArray {
+         require(input.size <= 16 * 1024 * 1024) { "device pairing input is too large" }
+         return withChurBuffer(maxOf(1, input.size)) { source ->
+@@ -712,8 +712,8 @@ object ChurVault {
+     }
+ 
+     private fun requirePlaybackPositionAbi() {
+-        if (ChurNative.abiVersionMajor() != 7 || ChurNative.abiVersionMinor() < 2) {
+-            throw ChurFailure(ChurStatus.ABI_INCOMPATIBLE, "encrypted playback positions require ABI 7.2")
++        if (ChurNative.abiVersionMajor() != 8 || ChurNative.abiVersionMinor() < 2) {
++            throw ChurFailure(ChurStatus.ABI_INCOMPATIBLE, "encrypted playback positions require ABI 8.2")
+         }
+     }
+ 
+@@ -1266,8 +1266,8 @@ object ChurVault {
+     }
+ 
+     private fun requireCurrentAbi() {
+-        if (ChurNative.abiVersionMajor() != 7) {
+-            throw ChurFailure(ChurStatus.ABI_INCOMPATIBLE, "native ABI 7 is required")
++        if (ChurNative.abiVersionMajor() != 8) {
++            throw ChurFailure(ChurStatus.ABI_INCOMPATIBLE, "native ABI 8 is required")
+         }
+     }
+ 
+@@ -1732,15 +1732,19 @@ object ChurVault {
+     private const val KEYSTORE_MATERIAL_CAPACITY = 4 + 2 * (4 + 64 + 4 + 160 + 12 + 48)
+ 
+     /** The bounded public identity, enrollment, and initial operation record. */
+-    private const val SHARING_IDENTITY_CAPACITY = 4 * 1024
++    private const val SHARING_IDENTITY_CAPACITY = 32 * 1024
+ 
+     /** Four thousand active members with identifiers and fingerprints. */
+     private const val SHARING_OVERVIEW_CAPACITY = 512 * 1024
+ 
++    private const val OBJECT_PREKEY_LENGTH = 4_655
++    private const val PAIRING_CREDENTIALS_CAPACITY = 16 * 1024
++    private const val OBJECT_GRANT_LENGTH = 4_679
++
+     private const val SHARING_RECIPIENT_CAPACITY = 128
+ 
+-    /** Four bounded sharing records; current v1 output is below two KiB. */
+-    private const val PREPARED_SHARE_CAPACITY = 16 * 1024
++    /** Membership and grant, plus their signed operation records. */
++    private const val PREPARED_SHARE_CAPACITY = 64 * 1024
+ 
+     /** The exact response bound required before a revocation changes state. */
+     private const val SHARING_BUNDLE_CAPACITY = 16 * 1024 * 1024
+diff --git a/shared/core-ffi/src/commonMain/kotlin/dev/po4yka/chur/ffi/JpegXlDecoder.kt b/shared/core-ffi/src/commonMain/kotlin/dev/po4yka/chur/ffi/JpegXlDecoder.kt
+index bd5947b1..328fe760 100644
+--- a/shared/core-ffi/src/commonMain/kotlin/dev/po4yka/chur/ffi/JpegXlDecoder.kt
++++ b/shared/core-ffi/src/commonMain/kotlin/dev/po4yka/chur/ffi/JpegXlDecoder.kt
+@@ -40,8 +40,8 @@ internal fun jpegXlDimensions(width: Int, height: Int, maxEdge: Int): Pair<Int,
+ }
+ 
+ internal fun requireJpegXlCapability() {
+-    if (ChurNative.abiVersionMajor() != 7 || ChurNative.abiVersionMinor() < 1 ||
++    if (ChurNative.abiVersionMajor() != 8 || ChurNative.abiVersionMinor() < 1 ||
+         ChurNative.capabilities() and (1L shl 9) == 0L) {
+-        throw ChurFailure(dev.po4yka.chur.core.model.ChurStatus.ABI_INCOMPATIBLE, "portable JPEG XL requires ABI 7.1")
++        throw ChurFailure(dev.po4yka.chur.core.model.ChurStatus.ABI_INCOMPATIBLE, "portable JPEG XL requires ABI 8.1")
+     }
+ }
+diff --git a/shared/core-ffi/src/commonMain/kotlin/dev/po4yka/chur/ffi/Records.kt b/shared/core-ffi/src/commonMain/kotlin/dev/po4yka/chur/ffi/Records.kt
+index 5c454c29..74db9b23 100644
+--- a/shared/core-ffi/src/commonMain/kotlin/dev/po4yka/chur/ffi/Records.kt
++++ b/shared/core-ffi/src/commonMain/kotlin/dev/po4yka/chur/ffi/Records.kt
+@@ -1,6 +1,7 @@
+ package dev.po4yka.chur.ffi
+ 
+ import dev.po4yka.chur.core.model.ChurStatus
++import kotlin.io.encoding.Base64
+ 
+ /**
+  * The canonical boundary records of `docs/interop/FFI_CONTRACT.md` §6.4 and
+@@ -37,8 +38,9 @@ const val GCM_NONCE_LENGTH: Int = 12
+ /** A wrapped 32-byte key and its 16-byte tag. */
+ const val WRAPPED_KEY_LENGTH: Int = 48
+ 
+-/** Length of an Ed25519 or X25519 public key. */
+-const val PUBLIC_KEY_LENGTH: Int = 32
++/** Fixed public key sizes for the internal ML-DSA-65 and hybrid HPKE profile. */
++internal const val SIGNING_PUBLIC_KEY_LENGTH: Int = 1_952
++internal const val RECIPIENT_PUBLIC_KEY_LENGTH: Int = 1_216
+ 
+ private const val SHARING_BUNDLE_BYTES_MAX: Long = 16L * 1024 * 1024
+ private const val SHARING_RECORDS_MAX: Int = 4_096
+@@ -377,6 +379,25 @@ fun encodeSharingIssuerEvidence(evidence: SharingIssuerEvidence): ByteArray {
+ /** One device position that native signature and sequence checks accepted. */
+ data class SyncDeviceHead(val deviceId: ByteArray, val sequence: ULong)
+ 
++private const val PAIRING_REQUEST_BYTES = 6_559
++const val PAIRING_CODE_MAX_CHARS = 4 * ((PAIRING_REQUEST_BYTES + 2) / 3)
++
++fun encodeDevicePairingCode(request: ByteArray): String {
++    if (request.size != PAIRING_REQUEST_BYTES) throw ChurFailure(ChurStatus.INVALID_INPUT, "invalid device request length")
++    return Base64.encode(request)
++}
++
++fun decodeDevicePairingCode(requestCode: String): ByteArray {
++    if (requestCode.length != PAIRING_CODE_MAX_CHARS) {
++        throw ChurFailure(ChurStatus.INVALID_INPUT, "invalid device request length")
++    }
++    val bytes = try { Base64.decode(requestCode) } catch (_: IllegalArgumentException) {
++        throw ChurFailure(ChurStatus.INVALID_INPUT, "invalid device request encoding")
++    }
++    if (bytes.size != PAIRING_REQUEST_BYTES) throw ChurFailure(ChurStatus.INVALID_INPUT, "invalid device request length")
++    return bytes
++}
++
+ class DevicePairingRequest(val request: ByteArray, val fingerprint: String)
+ 
+ class DevicePairingPreview(val vaultId: ByteArray, val deviceId: ByteArray, val fingerprint: String)
+@@ -520,14 +541,14 @@ fun decodeSyncHeads(bytes: ByteArray, length: Int): List<SyncDeviceHead> {
+ /** Decodes the collection-sharing identity record of §6.9. */
+ fun decodeSharingIdentity(bytes: ByteArray, length: Int): SharingIdentity {
+     val reader = RecordReader(bytes, length)
+-    if (reader.short() != 1) {
+-        throw ChurFailure(ChurStatus.NON_CANONICAL_ENCODING, "the sharing identity version")
++    if (reader.short() != 2) {
++        throw ChurFailure(ChurStatus.UNSUPPORTED_VERSION, "the sharing identity version")
+     }
+     val identity = SharingIdentity(
+         vaultId = reader.take(ID_LENGTH),
+         deviceId = reader.take(ID_LENGTH),
+-        signingPublicKey = reader.take(PUBLIC_KEY_LENGTH),
+-        hpkePublicKey = reader.take(PUBLIC_KEY_LENGTH),
++        signingPublicKey = reader.take(SIGNING_PUBLIC_KEY_LENGTH),
++        hpkePublicKey = reader.take(RECIPIENT_PUBLIC_KEY_LENGTH),
+         fingerprint = reader.bounded().decodeToString(),
+         enrollment = reader.bounded(),
+         initialOperation = reader.bounded(),
+diff --git a/shared/core-ffi/src/commonTest/kotlin/dev/po4yka/chur/ffi/DevicePairingRecordsTest.kt b/shared/core-ffi/src/commonTest/kotlin/dev/po4yka/chur/ffi/DevicePairingRecordsTest.kt
+index e3ffb59a..f4b849a3 100644
+--- a/shared/core-ffi/src/commonTest/kotlin/dev/po4yka/chur/ffi/DevicePairingRecordsTest.kt
++++ b/shared/core-ffi/src/commonTest/kotlin/dev/po4yka/chur/ffi/DevicePairingRecordsTest.kt
+@@ -37,6 +37,17 @@ class DevicePairingRecordsTest {
+         assertEquals(ChurStatus.RESOURCE_LIMIT_EXCEEDED, refusal.status)
+     }
+ 
++    @Test
++    fun transfer_preserves_the_full_request_and_rejects_wrong_sizes_before_native_decoding() {
++        val request = ByteArray(6_559) { it.toByte() }
++        val code = encodeDevicePairingCode(request)
++        assertEquals(8_748, code.length)
++        assertContentEquals(request, decodeDevicePairingCode(code))
++        for (invalid in listOf("00".repeat(210), code + "A", "!".repeat(code.length), "A".repeat(code.length))) {
++            assertFailsWith<ChurFailure> { decodeDevicePairingCode(invalid) }
++        }
++    }
++
+     private fun device(id: Int, fingerprint: String, retry: Int): ByteArray {
+         val text = fingerprint.encodeToByteArray()
+         return ByteArray(16) { id.toByte() } + byteArrayOf(0, 0, 0, text.size.toByte()) + text +
+diff --git a/shared/core-sync/src/androidHostTest/kotlin/dev/po4yka/chur/sync/PeerSyncHostTest.kt b/shared/core-sync/src/androidHostTest/kotlin/dev/po4yka/chur/sync/PeerSyncHostTest.kt
+index 2ac65c13..7bf8de7b 100644
+--- a/shared/core-sync/src/androidHostTest/kotlin/dev/po4yka/chur/sync/PeerSyncHostTest.kt
++++ b/shared/core-sync/src/androidHostTest/kotlin/dev/po4yka/chur/sync/PeerSyncHostTest.kt
+@@ -5,12 +5,28 @@ import dev.po4yka.chur.ffi.*
+ import java.io.File
+ import java.io.RandomAccessFile
+ import java.nio.file.Files
++import kotlinx.serialization.json.Json
+ import kotlinx.coroutines.*
+ import kotlinx.coroutines.flow.first
+ import kotlin.test.*
+ 
+ /** Real encrypted vaults, JNI, and direct TCP; no service, mock transport, or account. */
+ class PeerSyncHostTest {
++    @Test
++    fun a_full_native_history_page_fits_one_transport_frame_and_preserves_the_signed_bytes() {
++        val signed = ByteArray(HISTORY_PAGE_MAX - 16) { 0x81.toByte() }
++        val native = number(1u, 4) + number(8u, 8) + record(signed)
++        val message = Json.encodeToString(PeerMessage.serializer(), PeerMessage("history", history = encodeHistoryPage(native)))
++        assertTrue(message.encodeToByteArray().size < 4 * 1024 * 1024)
++        val received = Json.decodeFromString(PeerMessage.serializer(), message)
++        val page = decodeHistoryPage(received.history, 7u, 8u)
++        assertEquals(8uL, page.lastSequence)
++        assertContentEquals(record(signed), page.stagedBytes)
++        assertFailsWith<IllegalArgumentException> { decodeHistoryPage(received.history, 8u, 9u) }
++        assertFailsWith<IllegalArgumentException> { decodeHistoryPage(received.history, 6u, 8u) }
++        assertFailsWith<IllegalArgumentException> { encodeHistoryPage(native + 0.toByte()) }
++    }
++
+     @Test
+     fun paired_devices_transfer_originals_and_album_edits_in_both_directions_and_reconnect() = runBlocking {
+         val directory = Files.createTempDirectory("chur-peer-sync-").toFile()
+@@ -34,6 +50,10 @@ class PeerSyncHostTest {
+             ChurVault.closeSession(target.session)
+             target.session = ChurVault.unlockWithPassword(target.runtime, PASSWORD.encodeToByteArray())
+             assertFalse(right.refresh())
++            val oldInvitation = "127.0.0.1:1#" + "00".repeat(32)
++            assertEquals(ChurStatus.UNSUPPORTED_VERSION, assertFailsWith<ChurFailure> {
++                right.connect(oldInvitation)
++            }.status)
+             val original = ByteArray(800_000) { (it % 251).toByte() }
+             val first = import(source.session, directory, original)
+             val album = ChurVault.createAlbum(source.session, "From first device")
+diff --git a/shared/core-sync/src/commonMain/kotlin/dev/po4yka/chur/sync/PeerSyncCoordinator.kt b/shared/core-sync/src/commonMain/kotlin/dev/po4yka/chur/sync/PeerSyncCoordinator.kt
+index cfb4ae1f..77903e6e 100644
+--- a/shared/core-sync/src/commonMain/kotlin/dev/po4yka/chur/sync/PeerSyncCoordinator.kt
++++ b/shared/core-sync/src/commonMain/kotlin/dev/po4yka/chur/sync/PeerSyncCoordinator.kt
+@@ -94,7 +94,7 @@ public class PeerSyncCoordinator(private val clock: () -> Long = { 0L }) {
+         val port = response.number(2)
+         val secret = response.take(32)
+         response.end()
+-        try { publishCurrent { it.copy(invitation = "$address:$port#${secret.hex()}", message = "Waiting for the other device. Keep both apps open.") } }
++        try { publishCurrent { it.copy(invitation = "${INVITATION_PREFIX}$address:$port#${secret.hex()}", message = "Waiting for the other device. Keep both apps open.") } }
+         finally { secret.fill(0); encoded.fill(0) }
+         awaitReady()
+         hello()
+@@ -106,13 +106,17 @@ public class PeerSyncCoordinator(private val clock: () -> Long = { 0L }) {
+     }
+     /** Connects to a device invitation; both directions finish before success is reported. */
+     public suspend fun connect(invitation: String) = runPeer {
+-        refresh()
+-        val parts = invitation.trim().split('#')
++        val value = invitation.trim()
++        if (!value.startsWith(INVITATION_PREFIX)) {
++            throw ChurFailure(ChurStatus.UNSUPPORTED_VERSION, "unsupported peer invitation version")
++        }
++        val parts = value.removePrefix(INVITATION_PREFIX).split('#')
+         require(parts.size == 2 && parts[1].length == 64) { "invalid peer invitation" }
+         val endpoint = parts[0].split(':')
+         require(endpoint.size == 2)
+         val port = endpoint[1].toInt()
+         require(port in 1..65535)
++        refresh()
+         val secret = parts[1].unhex()
+         val request = byteArrayOf(2) + record(endpoint[0].encodeToByteArray()) + number(port.toULong(), 2) + secret
+         try { io(request) } finally { secret.fill(0); request.fill(0) }
+@@ -230,12 +234,8 @@ public class PeerSyncCoordinator(private val clock: () -> Long = { 0L }) {
+                     }
+                     "history" -> {
+                         require(request.id.size == 16)
+-                        val page = PeerBytes(io(byteArrayOf(8) + request.id + number(request.offset.toULong(), 8) + request.bytes))
+-                        val count = page.number(4).toInt()
+-                        require(count in 0..256)
+-                        var last = request.offset
+-                        val records = List(count) { last = page.number(8).toString(); page.record() }
+-                        PeerMessage("history", records = records, offset = last).also { page.end() }
++                        val page = io(byteArrayOf(8) + request.id + number(request.offset.toULong(), 8) + request.bytes)
++                        PeerMessage("history", history = encodeHistoryPage(page))
+                     }
+                     "checkpoint" -> PeerMessage("checkpoint", bytes = checkpoint ?: throw ChurFailure(ChurStatus.INVALID_INPUT, "request peer heads first"))
+                     // Native issues the grant only to the authenticated peer device and serves
+@@ -268,22 +268,11 @@ public class PeerSyncCoordinator(private val clock: () -> Long = { 0L }) {
+             val target = head.sequence.toULong()
+             while (after < target) {
+                 val response = request(PeerMessage("history", bytes = number(target, 8), id = head.device, offset = after.toString()))
+-                val page = response.records
+-                require(page.isNotEmpty() && page.size <= 256) { "peer omitted signed history" }
+-                val encoded = ByteArray(page.sumOf { 4 + it.size })
+-                var offset = 0
+-                for (operation in page) {
+-                    number(operation.size.toULong(), 4).copyInto(encoded, offset)
+-                    offset += 4
+-                    operation.copyInto(encoded, offset)
+-                    offset += operation.size
+-                }
+-                vault.stage(vaultId, SyncRecordKind.OPERATION_PAGE, clock(), encoded)
++                val page = decodeHistoryPage(response.history, after, target)
++                vault.stage(vaultId, SyncRecordKind.OPERATION_PAGE, clock(), page.stagedBytes)
+                 checkReport(vault.process() ?: locked())
+-                // This is only a bounded fetch position. Durable heads advance exclusively in Rust.
+-                val next = response.offset.toULong()
+-                require(next > after && next <= target) { "peer history page did not advance" }
+-                after = next
++                // The fetch position is public metadata. Rust advances durable heads after signature verification.
++                after = page.lastSequence
+             }
+         }
+         checkReport(vault.process() ?: locked())
+@@ -294,6 +283,7 @@ public class PeerSyncCoordinator(private val clock: () -> Long = { 0L }) {
+         val checkpointReport = vault.process() ?: locked()
+         checkReport(checkpointReport)
+         require(checkpointReport.pending == 0L) { "peer checkpoint has missing history" }
++        io(byteArrayOf(13) + record(checkpoint))
+         if (pendingPairing != null) {
+             vault.finishDevicePairing(clock()) ?: locked()
+             pairing = null
+@@ -327,3 +317,5 @@ public class PeerSyncCoordinator(private val clock: () -> Long = { 0L }) {
+         if (report.rejected > 0) throw ChurFailure(ChurStatus.fromValue(report.firstRejection), "signed peer history was rejected")
+     }
+ }
++
++private const val INVITATION_PREFIX = "chur-p2p3/"
+diff --git a/shared/core-sync/src/commonMain/kotlin/dev/po4yka/chur/sync/PeerWire.kt b/shared/core-sync/src/commonMain/kotlin/dev/po4yka/chur/sync/PeerWire.kt
+index 006b97c7..449c4c03 100644
+--- a/shared/core-sync/src/commonMain/kotlin/dev/po4yka/chur/sync/PeerWire.kt
++++ b/shared/core-sync/src/commonMain/kotlin/dev/po4yka/chur/sync/PeerWire.kt
+@@ -2,6 +2,7 @@ package dev.po4yka.chur.sync
+ 
+ import dev.po4yka.chur.ffi.ChurFailure
+ import dev.po4yka.chur.core.model.ChurStatus
++import kotlin.io.encoding.Base64
+ import kotlinx.serialization.Serializable
+ 
+ @Serializable
+@@ -13,7 +14,7 @@ internal data class PeerMessage(
+     val bytes: ByteArray = byteArrayOf(),
+     val id: ByteArray = byteArrayOf(),
+     val offset: String = "0",
+-    val records: List<ByteArray> = emptyList(),
++    val history: String = "",
+     val heads: List<PeerHead> = emptyList(),
+     val failure: Int? = null,
+ )
+@@ -40,3 +41,38 @@ internal fun String.unhex(): ByteArray {
+     return chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+ }
+ internal fun locked(): Nothing = throw ChurFailure(ChurStatus.VAULT_LOCKED, "the peer vault locked")
++
++/** The Rust peer ABI exports a byte-bounded page with one sequence before each signed operation. */
++internal const val HISTORY_PAGE_MAX = 2 * 1024 * 1024
++
++internal class PeerHistoryPage(val lastSequence: ULong, val stagedBytes: ByteArray)
++
++internal fun encodeHistoryPage(page: ByteArray): String {
++    require(page.size <= HISTORY_PAGE_MAX)
++    return Base64.encode(page)
++}
++
++internal fun decodeHistoryPage(history: String, after: ULong, through: ULong): PeerHistoryPage {
++    require(history.length <= 4 * ((HISTORY_PAGE_MAX + 2) / 3)) { "peer history page exceeds limit" }
++    val bytes = Base64.decode(history)
++    require(bytes.size <= HISTORY_PAGE_MAX) { "peer history page exceeds limit" }
++    val page = PeerBytes(bytes)
++    val count = page.number(4)
++    require(count in 1uL..256uL) { "peer omitted signed history" }
++    var last = after
++    val operations = List(count.toInt()) {
++        val sequence = page.number(8)
++        require(last < through && sequence == last + 1uL) { "non-contiguous peer history page" }
++        last = sequence
++        page.record()
++    }
++    page.end()
++    val staged = ByteArray(operations.sumOf { 4 + it.size })
++    var offset = 0
++    for (operation in operations) {
++        number(operation.size.toULong(), 4).copyInto(staged, offset)
++        operation.copyInto(staged, offset + 4)
++        offset += 4 + operation.size
++    }
++    return PeerHistoryPage(last, staged)
++}

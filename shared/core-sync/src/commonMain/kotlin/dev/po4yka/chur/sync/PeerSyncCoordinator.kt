@@ -94,7 +94,7 @@ public class PeerSyncCoordinator(private val clock: () -> Long = { 0L }) {
         val port = response.number(2)
         val secret = response.take(32)
         response.end()
-        try { publishCurrent { it.copy(invitation = "${INVITATION_PREFIX}$address:$port#${secret.hex()}", message = "Waiting for the other device. Keep both apps open.") } }
+        try { publishCurrent { it.copy(invitation = "$address:$port#${secret.hex()}", message = "Waiting for the other device. Keep both apps open.") } }
         finally { secret.fill(0); encoded.fill(0) }
         awaitReady()
         hello()
@@ -106,17 +106,13 @@ public class PeerSyncCoordinator(private val clock: () -> Long = { 0L }) {
     }
     /** Connects to a device invitation; both directions finish before success is reported. */
     public suspend fun connect(invitation: String) = runPeer {
-        val value = invitation.trim()
-        if (!value.startsWith(INVITATION_PREFIX)) {
-            throw ChurFailure(ChurStatus.UNSUPPORTED_VERSION, "unsupported peer invitation version")
-        }
-        val parts = value.removePrefix(INVITATION_PREFIX).split('#')
+        refresh()
+        val parts = invitation.trim().split('#')
         require(parts.size == 2 && parts[1].length == 64) { "invalid peer invitation" }
         val endpoint = parts[0].split(':')
         require(endpoint.size == 2)
         val port = endpoint[1].toInt()
         require(port in 1..65535)
-        refresh()
         val secret = parts[1].unhex()
         val request = byteArrayOf(2) + record(endpoint[0].encodeToByteArray()) + number(port.toULong(), 2) + secret
         try { io(request) } finally { secret.fill(0); request.fill(0) }
@@ -234,8 +230,12 @@ public class PeerSyncCoordinator(private val clock: () -> Long = { 0L }) {
                     }
                     "history" -> {
                         require(request.id.size == 16)
-                        val page = io(byteArrayOf(8) + request.id + number(request.offset.toULong(), 8) + request.bytes)
-                        PeerMessage("history", history = encodeHistoryPage(page))
+                        val page = PeerBytes(io(byteArrayOf(8) + request.id + number(request.offset.toULong(), 8) + request.bytes))
+                        val count = page.number(4).toInt()
+                        require(count in 0..256)
+                        var last = request.offset
+                        val records = List(count) { last = page.number(8).toString(); page.record() }
+                        PeerMessage("history", records = records, offset = last).also { page.end() }
                     }
                     "checkpoint" -> PeerMessage("checkpoint", bytes = checkpoint ?: throw ChurFailure(ChurStatus.INVALID_INPUT, "request peer heads first"))
                     // Native issues the grant only to the authenticated peer device and serves
@@ -268,11 +268,22 @@ public class PeerSyncCoordinator(private val clock: () -> Long = { 0L }) {
             val target = head.sequence.toULong()
             while (after < target) {
                 val response = request(PeerMessage("history", bytes = number(target, 8), id = head.device, offset = after.toString()))
-                val page = decodeHistoryPage(response.history, after, target)
-                vault.stage(vaultId, SyncRecordKind.OPERATION_PAGE, clock(), page.stagedBytes)
+                val page = response.records
+                require(page.isNotEmpty() && page.size <= 256) { "peer omitted signed history" }
+                val encoded = ByteArray(page.sumOf { 4 + it.size })
+                var offset = 0
+                for (operation in page) {
+                    number(operation.size.toULong(), 4).copyInto(encoded, offset)
+                    offset += 4
+                    operation.copyInto(encoded, offset)
+                    offset += operation.size
+                }
+                vault.stage(vaultId, SyncRecordKind.OPERATION_PAGE, clock(), encoded)
                 checkReport(vault.process() ?: locked())
-                // The fetch position is public metadata. Rust advances durable heads after signature verification.
-                after = page.lastSequence
+                // This is only a bounded fetch position. Durable heads advance exclusively in Rust.
+                val next = response.offset.toULong()
+                require(next > after && next <= target) { "peer history page did not advance" }
+                after = next
             }
         }
         checkReport(vault.process() ?: locked())
@@ -283,7 +294,6 @@ public class PeerSyncCoordinator(private val clock: () -> Long = { 0L }) {
         val checkpointReport = vault.process() ?: locked()
         checkReport(checkpointReport)
         require(checkpointReport.pending == 0L) { "peer checkpoint has missing history" }
-        io(byteArrayOf(13) + record(checkpoint))
         if (pendingPairing != null) {
             vault.finishDevicePairing(clock()) ?: locked()
             pairing = null
@@ -317,5 +327,3 @@ public class PeerSyncCoordinator(private val clock: () -> Long = { 0L }) {
         if (report.rejected > 0) throw ChurFailure(ChurStatus.fromValue(report.firstRejection), "signed peer history was rejected")
     }
 }
-
-private const val INVITATION_PREFIX = "chur-p2p3/"

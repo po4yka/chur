@@ -1,6 +1,6 @@
 import Darwin
 import Foundation
-import CryptoKit
+import Security
 import XCTest
 @testable import ChurScratch
 
@@ -10,9 +10,8 @@ final class IncomingShareSelectionTests: XCTestCase {
     private var scratch: URL!
     override func setUpWithError() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let key = SymmetricKey(size: .bits256)
-        inbox = try IncomingShareInbox(root: root.appendingPathComponent("inbox"),
-            publicKey: IncomingShareInbox.recipientPublicKey(for: key), privateKey: key)
+        let key = try XCTUnwrap(SecKeyCreateRandomKey([kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeySizeInBits: 2048] as CFDictionary, nil))
+        inbox = try IncomingShareInbox(root: root.appendingPathComponent("inbox"), publicKey: XCTUnwrap(SecKeyCopyPublicKey(key)), privateKey: key)
         scratch = root.appendingPathComponent("scratch")
         try IncomingShareSelection.prepareScratch(scratch)
     }

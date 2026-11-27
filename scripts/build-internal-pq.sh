@@ -18,7 +18,8 @@ destination=$(pwd -P)
 git -C "$root" ls-files --cached -z | tar -C "$root" -cf - --null -T - | tar -xf -
 overlay=experiments/internal-pq
 # Prevent git apply from discovering the outer checkout when building below build/.
-export GIT_CEILING_DIRECTORIES="$(dirname "$destination")"
+GIT_CEILING_DIRECTORIES=$(dirname "$destination")
+export GIT_CEILING_DIRECTORIES
 for part in rust shared apps test-vectors isolation; do
     git apply --whitespace=error "$overlay/$part.patch"
 done
@@ -39,6 +40,7 @@ case "$1" in
         cd rust
         export CARGO_TARGET_DIR="$destination/rust/target"
         cargo test --locked --workspace
+        ../scripts/check-c-abi.sh
         cargo run --locked -p chur-cli -- vectors verify --dir ../test-vectors/v1
         ;;
     android) ./gradlew --no-daemon :apps:androidApp:assembleDebug ;;

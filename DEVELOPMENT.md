@@ -72,7 +72,7 @@ The script copies the current working-tree contents of tracked files, applies th
 | Command | Result in the new directory |
 |---|---|
 | `prepare` | A source tree ready for inspection or native builds. |
-| `test` | The Rust workspace tests and CLI vector verification. Cargo writes the build output under `rust/target/`. |
+| `test` | The Rust workspace tests, release C ABI handshake and CLI vector verification. Cargo writes the build output under `rust/target/`. |
 | `android` | A Debug APK under `apps/androidApp/build/outputs/apk/debug/`. |
 | `ios` | An unsigned iOS Simulator Debug app under `build/xcode/Build/Products/Debug-iphonesimulator/`. |
 
@@ -121,15 +121,7 @@ cargo run --locked -p chur-cli -- vectors digest --dir ../test-vectors/v1
 (cd fuzz && cargo +nightly fuzz run <target> -- -runs=20000)
 ```
 
-The `cargo` commands run in `rust/`; `cargo fuzz` runs in `rust/fuzz/`. The Gradle commands and scripts run at the repository root. The C ABI harness is built and run by the `abi` job. Its Linux command is:
-
-```text
-cargo build --locked -p chur-ffi --release
-cc -Wall -Wextra -Werror -I crates/chur-ffi/include \
-   crates/chur-ffi/tests/handshake.c target/release/libchur_ffi.a \
-   -lpthread -ldl -lm -o handshake
-./handshake
-```
+The `cargo` commands run in `rust/`; `cargo fuzz` runs in `rust/fuzz/`. The Gradle commands and scripts run at the repository root. Both the ordinary `abi` job and the internal `test` build compile and run the C ABI harness against their own release library and header. Run `scripts/check-c-abi.sh` from the source tree for the selected profile.
 
 ### Mobile runtime and Swift checks
 

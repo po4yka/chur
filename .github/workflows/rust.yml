@@ -154,20 +154,8 @@ jobs:
       # checks before a vault opens. Linking a C program against the real
       # static library proves the symbols exist with C linkage and the declared
       # types, which a Rust test cannot.
-      - run: cargo build --locked -p chur-ffi --release
       - name: build and run the handshake harness
-        run: |
-          set -euo pipefail
-          # The static library now carries vendored SQLCipher and OpenSSL
-          # (ADR-0038), so the link needs the C runtime libraries they use.
-          cc -Wall -Wextra -Werror \
-            -I crates/chur-ffi/include \
-            crates/chur-ffi/tests/handshake.c \
-            target/release/libchur_ffi.a \
-            -lpthread -ldl -lm \
-            -o handshake
-          ./handshake
-          rm -rf chur-abi-harness-root
+        run: ../scripts/check-c-abi.sh
 
   fuzz:
     name: fuzz smoke

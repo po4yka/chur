@@ -606,6 +606,10 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
+      - name: install the Rust checks for the pinned toolchain
+        if: matrix.target == 'test'
+        working-directory: rust
+        run: rustup component add rustfmt clippy
       - name: prepare Android targets
         if: matrix.target == 'android'
         working-directory: rust

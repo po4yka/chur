@@ -156,6 +156,22 @@ targets:
         TEST_TARGET_NAME: Chur
         SWIFT_VERSION: "5.0"
         CODE_SIGNING_ALLOWED: NO
+
+  ChurCompatibilityTests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - CompatibilityTests
+    dependencies:
+      - target: Chur
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.po4yka.chur.compatibilitytests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Chur
+        SWIFT_VERSION: "5.0"
+        CODE_SIGNING_ALLOWED: NO
 schemes:
   Chur:
     build:
@@ -165,3 +181,12 @@ schemes:
     test:
       targets:
         - ChurUITests
+  ChurCompatibility:
+    build:
+      targets:
+        Chur: [test]
+        ChurCompatibilityTests: [test]
+    test:
+      config: Release
+      targets:
+        - ChurCompatibilityTests

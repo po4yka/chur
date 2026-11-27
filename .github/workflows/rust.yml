@@ -634,9 +634,7 @@ jobs:
         if: matrix.target == 'ios'
         run: |
           cd "$RUNNER_TEMP/pq"
-          app=build/xcode/Build/Products/Debug-iphonesimulator/Chur.app
-          test "$(plutil -extract CFBundleIdentifier raw "$app/Info.plist")" = dev.po4yka.chur.pqinternal
-          test "$(plutil -extract CFBundleIdentifier raw "$app/PlugIns/ChurShare.appex/Info.plist")" = dev.po4yka.chur.pqinternal.share
+          apps/iosApp/test-share-simulator.sh
           apps/iosApp/test-host.sh
 
   deny:

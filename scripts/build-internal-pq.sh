@@ -47,6 +47,6 @@ case "$1" in
     ios)
         xcodebuild -project apps/iosApp/Chur.xcodeproj -scheme Chur -configuration Debug \
             -destination 'generic/platform=iOS Simulator' -derivedDataPath "$destination/build/xcode" \
-            CODE_SIGNING_ALLOWED=NO build
+            CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES CODE_SIGN_IDENTITY=- build-for-testing
         ;;
 esac

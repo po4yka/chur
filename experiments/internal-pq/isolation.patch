@@ -181,3 +181,67 @@
  	<key>CFBundleExecutable</key>
  	<string>$(EXECUTABLE_NAME)</string>
  	<key>CFBundleIdentifier</key>
+--- a/apps/iosApp/Chur.xcodeproj/project.pbxproj
++++ b/apps/iosApp/Chur.xcodeproj/project.pbxproj
+@@ -28,6 +28,7 @@
+ 		7CCA6C31D530E14AD654013B /* ChurMirror.icon in Resources */ = {isa = PBXBuildFile; fileRef = EFDC0B868EDA090EE69D45E3 /* ChurMirror.icon */; };
+ 		7D9C51CF50DBD191FEA70385 /* IncomingShareInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D4757613DACDFC38CB949AB /* IncomingShareInbox.swift */; };
+ 		857BEF241452BE4E22CAF1F0 /* PrivateOnboardingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00F6FC2481FFBD6CAEBA5F08 /* PrivateOnboardingTests.swift */; };
++		8DCE6B9E0CDB7DC39BFE4C4C /* IncomingShareSystemTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18E44B36610A5AB67596DDE6 /* IncomingShareSystemTests.swift */; };
+ 		9134555525F2B5F6A9C0F816 /* IncomingShareItems.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FEF35F12A854F397F674ABE /* IncomingShareItems.swift */; };
+ 		9EF133A9F98E205C798773E1 /* DocumentImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0523F2FBC67DAC872B495D25 /* DocumentImport.swift */; };
+ 		AE6DE36920EFB1B38D0A7C1D /* filament-LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = CDAF073EA984D3802FEC7384 /* filament-LICENSE */; };
+@@ -84,6 +85,7 @@
+ 		0523F2FBC67DAC872B495D25 /* DocumentImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentImport.swift; sourceTree = "<group>"; };
+ 		14389BA87803609072A63994 /* LauncherQuickAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherQuickAction.swift; sourceTree = "<group>"; };
+ 		1879E92973E7D404D7E0C046 /* UtilityPet.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = UtilityPet.icon; sourceTree = "<group>"; };
++		18E44B36610A5AB67596DDE6 /* IncomingShareSystemTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomingShareSystemTests.swift; sourceTree = "<group>"; };
+ 		2897ADC9CB3A0F55520C3DD3 /* LivePhotoCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LivePhotoCapture.swift; sourceTree = "<group>"; };
+ 		2C74ED0E6BA7C6FB8ECDD1CD /* chur_interactive.manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = chur_interactive.manifest.json; sourceTree = "<group>"; };
+ 		2FEF35F12A854F397F674ABE /* IncomingShareItems.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomingShareItems.swift; sourceTree = "<group>"; };
+@@ -169,6 +171,7 @@
+ 		3709DCCB119BE5BE4C8A2DA4 /* UITests */ = {
+ 			isa = PBXGroup;
+ 			children = (
++				18E44B36610A5AB67596DDE6 /* IncomingShareSystemTests.swift */,
+ 				00F6FC2481FFBD6CAEBA5F08 /* PrivateOnboardingTests.swift */,
+ 			);
+ 			path = UITests;
+@@ -448,6 +451,7 @@
+ 			isa = PBXSourcesBuildPhase;
+ 			buildActionMask = 2147483647;
+ 			files = (
++				8DCE6B9E0CDB7DC39BFE4C4C /* IncomingShareSystemTests.swift in Sources */,
+ 				857BEF241452BE4E22CAF1F0 /* PrivateOnboardingTests.swift in Sources */,
+ 			);
+ 			runOnlyForDeploymentPostprocessing = 0;
+--- a/apps/iosApp/NativeTests/TestHost.swift
++++ b/apps/iosApp/NativeTests/TestHost.swift
+@@ -14,7 +14,26 @@
+     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
+         guard let scene = scene as? UIWindowScene else { return }
+         let window = UIWindow(windowScene: scene)
+-        window.rootViewController = UIViewController()
++        let controller = UIViewController()
++        if ProcessInfo.processInfo.arguments.contains("-ShareFixture") {
++            let share = UIButton(type: .system)
++            share.setTitle("Share fixture", for: .normal)
++            share.sizeToFit()
++            share.center = CGPoint(x: window.bounds.midX, y: window.bounds.midY)
++            controller.view.addSubview(share)
++            share.addAction(UIAction { _ in
++                let file = FileManager.default.temporaryDirectory.appendingPathComponent("share-proof.txt")
++                do {
++                    try Data("From the system share extension.".utf8).write(to: file)
++                    let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil)
++                    sheet.popoverPresentationController?.sourceView = share
++                    controller.present(sheet, animated: true)
++                } catch {
++                    share.setTitle(error.localizedDescription, for: .normal)
++                }
++            }, for: .touchUpInside)
++        }
++        window.rootViewController = controller
+         window.makeKeyAndVisible()
+         self.window = window
+     }

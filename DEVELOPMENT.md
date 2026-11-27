@@ -74,7 +74,9 @@ The script copies the current working-tree contents of tracked files, applies th
 | `prepare` | A source tree ready for inspection or native builds. |
 | `test` | The Rust workspace tests, release C ABI handshake and CLI vector verification. Cargo writes the build output under `rust/target/`. |
 | `android` | A Debug APK under `apps/androidApp/build/outputs/apk/debug/`. |
-| `ios` | An unsigned iOS Simulator Debug app under `build/xcode/Build/Products/Debug-iphonesimulator/`. |
+| `ios` | An ad-hoc signed iOS Simulator Debug app and its UI tests under `build/xcode/Build/Products/Debug-iphonesimulator/`. |
+
+After the `ios` build, run `NEW_DIRECTORY/apps/iosApp/test-share-simulator.sh` to send a file through the system Share sheet and read its contents in the internal vault. The check uses a disposable simulator.
 
 Both internal apps use `dev.po4yka.chur.pqinternal`, native ABI 8.4 and a new vault. Use the ordinary application for historical vaults. Keep test measurements with the source revision, build profile, ABI and target device. [Profile decision](docs/adr/0073-internal-post-quantum-profile.md) · [Release checks](docs/assurance/RELEASE_GATES.md#internal-post-quantum-profile)
 

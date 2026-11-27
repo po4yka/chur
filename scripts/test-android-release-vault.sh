@@ -12,7 +12,7 @@ keytool -genkeypair -alias chur-release -keyalg RSA -keysize 2048 -validity 2 \
     -storepass:env CHUR_RELEASE_PASSWORD -keystore "$CHUR_RELEASE_KEYSTORE"
 
 ./gradlew -PchurReleaseVaultTest=true -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect \
-    :apps:androidApp:classicalVaultApi35ReleaseAndroidTest
+    :apps:androidApp:classicalVaultApi35ReleaseAndroidTest "$@"
 
 python3 - <<'PY'
 from pathlib import Path

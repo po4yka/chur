@@ -5,12 +5,12 @@
 # upgrades. Every version here is exact; none is a range.
 
 [versions]
-camerax = "1.6.2"
-filament = "1.80.1"
+camerax = "1.7.0"
+filament = "1.81.0"
 # Toolchain
 jdk = "21"
 kotlin = "2.4.21"
-agp = "9.5.2"
+agp = "9.5.3"
 composeMultiplatform = "1.12.2"
 # Compose Multiplatform Material 3 ships on its own version line, not the
 # release-train number above.

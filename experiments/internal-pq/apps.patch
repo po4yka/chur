@@ -1,0 +1,542 @@
+diff --git a/apps/iosApp/Chur.xcodeproj/project.pbxproj b/apps/iosApp/Chur.xcodeproj/project.pbxproj
+index da196d41..8250639d 100644
+--- a/apps/iosApp/Chur.xcodeproj/project.pbxproj
++++ b/apps/iosApp/Chur.xcodeproj/project.pbxproj
+@@ -228,6 +228,7 @@
+ 			isa = PBXNativeTarget;
+ 			buildConfigurationList = DC6F1CF36C0FD1FAE79B32D6 /* Build configuration list for PBXNativeTarget "ChurShare" */;
+ 			buildPhases = (
++				E94779B1B1B5FDA6A4908465 /* Stage inbox static library */,
+ 				F3612FA111273F5F19BFA0FB /* Sources */,
+ 			);
+ 			buildRules = (
+@@ -338,6 +339,25 @@
+ 			shellPath = /bin/sh;
+ 			shellScript = "set -euo pipefail\n\"$SRCROOT/SpiritRenderer/stage-filament.sh\"\ncd \"$SRCROOT/../..\"\ncase \"$PLATFORM_NAME\" in\n  iphonesimulator) target=IosSimulatorArm64; directory=iosSimulatorArm64; triple=aarch64-apple-ios-sim ;;\n  iphoneos) target=IosArm64; directory=iosArm64; triple=aarch64-apple-ios ;;\n  *) echo \"Unsupported Apple platform: $PLATFORM_NAME\" >&2; exit 1 ;;\nesac\ncase \"$CONFIGURATION\" in\n  Debug|Release) ;;\n  *) echo \"Unsupported configuration: $CONFIGURATION\" >&2; exit 1 ;;\nesac\n./gradlew \":shared:app:link${CONFIGURATION}Framework${target}\"\nvariant=\"$(printf '%s' \"$CONFIGURATION\" | tr '[:upper:]' '[:lower:]')Framework\"\nmkdir -p \"$DERIVED_FILE_DIR\"\nditto \"shared/app/build/bin/$directory/$variant/ChurApp.framework\" \"$DERIVED_FILE_DIR/ChurApp.framework\"\nditto \"rust/target/$triple/${variant%Framework}/libchur_ffi.a\" \"$DERIVED_FILE_DIR/libchur_ffi.a\"\n";
+ 		};
++		E94779B1B1B5FDA6A4908465 /* Stage inbox static library */ = {
++			isa = PBXShellScriptBuildPhase;
++			alwaysOutOfDate = 1;
++			buildActionMask = 2147483647;
++			files = (
++			);
++			inputFileListPaths = (
++			);
++			inputPaths = (
++			);
++			name = "Stage inbox static library";
++			outputFileListPaths = (
++			);
++			outputPaths = (
++			);
++			runOnlyForDeploymentPostprocessing = 0;
++			shellPath = /bin/sh;
++			shellScript = "set -euo pipefail\narchive=$(\"$SRCROOT/build-inbox.sh\" \"$PLATFORM_NAME\")\nmkdir -p \"$DERIVED_FILE_DIR\"\nditto \"$archive\" \"$DERIVED_FILE_DIR/libchur_ffi.a\"\n";
++		};
+ /* End PBXShellScriptBuildPhase section */
+ 
+ /* Begin PBXSourcesBuildPhase section */
+@@ -444,6 +464,7 @@
+ 				PRODUCT_BUNDLE_IDENTIFIER = dev.po4yka.chur;
+ 				SDKROOT = iphoneos;
+ 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG CHUR_FILAMENT";
++				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/InboxNative";
+ 				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/SpiritRenderer/ChurSpirit-Bridging-Header.h";
+ 				SWIFT_VERSION = 5.0;
+ 				TARGETED_DEVICE_FAMILY = "1,2";
+@@ -519,6 +540,8 @@
+ 				ARCHS = arm64;
+ 				CODE_SIGNING_ALLOWED = NO;
+ 				CODE_SIGN_ENTITLEMENTS = IncomingShare.entitlements;
++				DEAD_CODE_STRIPPING = YES;
++				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+ 				INFOPLIST_FILE = ShareExtension/Info.plist;
+ 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+ 				LD_RUNPATH_SEARCH_PATHS = (
+@@ -526,9 +549,12 @@
+ 					"@executable_path/Frameworks",
+ 					"@executable_path/../../Frameworks",
+ 				);
++				OTHER_LDFLAGS = "$(inherited) $(DERIVED_FILE_DIR)/libchur_ffi.a -framework Security";
+ 				PRODUCT_BUNDLE_IDENTIFIER = dev.po4yka.chur.share;
+ 				SDKROOT = iphoneos;
+ 				SKIP_INSTALL = YES;
++				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CHUR_SHARE_EXTENSION";
++				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/InboxNative";
+ 				SWIFT_VERSION = 5.0;
+ 				TARGETED_DEVICE_FAMILY = "1,2";
+ 			};
+@@ -561,6 +587,8 @@
+ 				ARCHS = arm64;
+ 				CODE_SIGNING_ALLOWED = NO;
+ 				CODE_SIGN_ENTITLEMENTS = IncomingShare.entitlements;
++				DEAD_CODE_STRIPPING = YES;
++				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+ 				INFOPLIST_FILE = ShareExtension/Info.plist;
+ 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+ 				LD_RUNPATH_SEARCH_PATHS = (
+@@ -568,9 +596,12 @@
+ 					"@executable_path/Frameworks",
+ 					"@executable_path/../../Frameworks",
+ 				);
++				OTHER_LDFLAGS = "$(inherited) $(DERIVED_FILE_DIR)/libchur_ffi.a -framework Security";
+ 				PRODUCT_BUNDLE_IDENTIFIER = dev.po4yka.chur.share;
+ 				SDKROOT = iphoneos;
+ 				SKIP_INSTALL = YES;
++				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CHUR_SHARE_EXTENSION";
++				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/InboxNative";
+ 				SWIFT_VERSION = 5.0;
+ 				TARGETED_DEVICE_FAMILY = "1,2";
+ 			};
+@@ -601,6 +632,7 @@
+ 				PRODUCT_BUNDLE_IDENTIFIER = dev.po4yka.chur;
+ 				SDKROOT = iphoneos;
+ 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) CHUR_FILAMENT";
++				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/InboxNative";
+ 				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/SpiritRenderer/ChurSpirit-Bridging-Header.h";
+ 				SWIFT_VERSION = 5.0;
+ 				TARGETED_DEVICE_FAMILY = "1,2";
+diff --git a/apps/iosApp/Package.swift b/apps/iosApp/Package.swift
+index aff4d51c..cc7a9425 100644
+--- a/apps/iosApp/Package.swift
++++ b/apps/iosApp/Package.swift
+@@ -1,12 +1,19 @@
+ // swift-tools-version: 6.0
++import Foundation
+ import PackageDescription
+ 
++// build-inbox.sh stages the host archive here before the Swift tests link.
++let inboxLibrary = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
++    .appendingPathComponent(".build/inbox-native/debug/libchur_ffi.a").path
++
+ let package = Package(
+     name: "ChurScratch",
+     platforms: [.macOS(.v15), .iOS(.v18)],
+     products: [.library(name: "ChurScratch", targets: ["ChurScratch"])],
+     targets: [
+-        .target(name: "ChurScratch", path: "Sources", exclude: ["ChurApp.swift", "AdaptiveScene.swift"], sources: ["ScratchCopy.swift", "DirectoryExport.swift", "DocumentImport.swift", "PublicCamera.swift", "IncomingShareInbox.swift", "IncomingShareSelection.swift", "IncomingShareItems.swift", "MediaOriginalSafety.swift", "LivePhotoBundle.swift", "LivePhotoCapture.swift", "LauncherQuickAction.swift"]),
++        .systemLibrary(name: "ChurInboxNative", path: "InboxNative"),
++        .target(name: "ChurScratch", dependencies: ["ChurInboxNative"], path: "Sources", exclude: ["ChurApp.swift", "AdaptiveScene.swift"], sources: ["ScratchCopy.swift", "DirectoryExport.swift", "DocumentImport.swift", "PublicCamera.swift", "IncomingShareInbox.swift", "IncomingShareSelection.swift", "IncomingShareItems.swift", "MediaOriginalSafety.swift", "LivePhotoBundle.swift", "LivePhotoCapture.swift", "LauncherQuickAction.swift"],
++            linkerSettings: [.unsafeFlags(["-Xlinker", inboxLibrary], .when(platforms: [.macOS]))]),
+         .testTarget(name: "ChurScratchTests", dependencies: ["ChurScratch"], path: "Tests"),
+     ]
+ )
+diff --git a/apps/iosApp/README.md b/apps/iosApp/README.md
+index f3c64c73..c31d172a 100644
+--- a/apps/iosApp/README.md
++++ b/apps/iosApp/README.md
+@@ -26,6 +26,8 @@ xcodebuild -project apps/iosApp/Chur.xcodeproj -scheme Chur \
+   CODE_SIGNING_ALLOWED=NO build
+ ```
+ 
++Run the Swift host tests with `apps/iosApp/test-host.sh`. The script builds the Rust inbox ABI for the host before it links the tests.
++
+ The first build phase selects the matching Gradle framework and Rust static
+ library for the Xcode platform and configuration. The application links one
+ Rust archive. Its deployment target is iOS 18.0, matching
+@@ -119,10 +121,10 @@ builds do not register capabilities or change an Apple Developer account.
+ Open Chur once after installation to prepare the inbox. An unavailable group
+ or locked Keychain fails closed; the extension explains how to retry.
+ 
+-The app creates a separate RSA-2048 ingress private key in its own Keychain,
++The app stores a separate 32-byte X-Wing receiving seed in its own Keychain,
+ with `WhenUnlockedThisDeviceOnly` accessibility. The extension receives only
+ its public key. No vault key, password, session, or catalog is shared. Each
+-item has a fresh AES-256-GCM key, wrapped with RSA-OAEP-SHA256. Encrypted,
++item has a fresh AES-256-GCM key, sealed with X-Wing HPKE, HKDF-SHA256, and ChaCha20-Poly1305. The internal `CHURIN02` header carries an 1120-byte encapsulation and a 48-byte sealed item key. Encrypted,
+ bounded metadata contains the original name, MIME type, and byte length.
+ One MiB authenticated chunks bind the envelope header and chunk position.
+ Random batch names and numbered ciphertext filenames reveal no source names.
+diff --git a/apps/iosApp/ShareExtension/ShareViewController.swift b/apps/iosApp/ShareExtension/ShareViewController.swift
+index bb5b6154..f0a5f79a 100644
+--- a/apps/iosApp/ShareExtension/ShareViewController.swift
++++ b/apps/iosApp/ShareExtension/ShareViewController.swift
+@@ -62,7 +62,7 @@ final class ShareViewController: UIViewController {
+         }
+         DispatchQueue.global(qos: .userInitiated).async {
+             do {
+-                let inbox = try IncomingShareInbox.open(forApplication: false)
++                let inbox = try IncomingShareInbox.openForExtension()
+                 let batch = try inbox.begin()
+                 var completed = false
+                 defer { if !completed { inbox.discard(batch) } }
+diff --git a/apps/iosApp/Sources/ChurApp.swift b/apps/iosApp/Sources/ChurApp.swift
+index fe497180..588bdf21 100644
+--- a/apps/iosApp/Sources/ChurApp.swift
++++ b/apps/iosApp/Sources/ChurApp.swift
+@@ -37,7 +37,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
+                     try IncomingShareSelection.prepareScratch(self.incomingScratch)
+                     self.incomingScratchReady = true
+                 }
+-                let inbox = try IncomingShareInbox.open(forApplication: true)
++                let inbox = try IncomingShareInbox.openForApplication()
+                 if let batch = try inbox.pending().first {
+                     prepared = try IncomingShareSelection(inbox: inbox, batch: batch,
+                         scratch: self.incomingScratch, onExpired: { [weak self] in
+diff --git a/apps/iosApp/Sources/IncomingShareInbox.swift b/apps/iosApp/Sources/IncomingShareInbox.swift
+index 9b1ee912..0232ba99 100644
+--- a/apps/iosApp/Sources/IncomingShareInbox.swift
++++ b/apps/iosApp/Sources/IncomingShareInbox.swift
+@@ -1,3 +1,4 @@
++import ChurInboxNative
+ import CryptoKit
+ import Darwin
+ import Foundation
+@@ -13,53 +14,108 @@ final class IncomingShareInbox: @unchecked Sendable {
+     static let itemLimit = 64
+     static let lifetime: TimeInterval = 24 * 60 * 60
+     static let chunkSize = 1024 * 1024
+-    private static let magic = Data("CHURIN01".utf8)
++    private static let magic = Data("CHURIN02".utf8)
+     let root: URL
+-    private let publicKey: SecKey
+-    private let privateKey: SecKey?
++    private let publicKey: Data
++    private let privateKey: SymmetricKey?
+ 
+-    init(root: URL, publicKey: SecKey, privateKey: SecKey? = nil) throws {
++    init(root: URL, publicKey: Data, privateKey: SymmetricKey? = nil) throws {
++        guard publicKey.count == Int(CHUR_INBOX_PUBLIC_LEN),
++            privateKey == nil || privateKey?.bitCount == 256 else { throw IncomingShareFailure.invalid }
+         self.root = root; self.publicKey = publicKey; self.privateKey = privateKey
+         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true,
+             attributes: [.protectionKey: FileProtectionType.complete])
+         try (root as NSURL).setResourceValue(true, forKey: .isExcludedFromBackupKey)
+     }
+ 
+-    static func open(forApplication: Bool) throws -> IncomingShareInbox {
++    private static func groupPaths() throws -> (root: URL, publicKey: URL) {
+         guard let groupRoot = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else {
+             throw IncomingShareFailure.unavailable
+         }
+-        let root = groupRoot.appendingPathComponent("inbox", isDirectory: true)
+-        let publicURL = groupRoot.appendingPathComponent("ingress-public-key")
+-        if forApplication {
+-            let tag = Data("dev.po4yka.chur.incoming.rsa.v1".utf8)
+-            let query: [CFString: Any] = [kSecClass: kSecClassKey, kSecAttrApplicationTag: tag,
+-                kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecReturnRef: true]
+-            var found: CFTypeRef?
+-            let status = SecItemCopyMatching(query as CFDictionary, &found)
+-            let key: SecKey
+-            if status == errSecSuccess, let found { key = (found as! SecKey) }
+-            else if status == errSecItemNotFound {
+-                var error: Unmanaged<CFError>?
+-                guard let created = SecKeyCreateRandomKey([
+-                    kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeySizeInBits: 2048,
+-                    kSecPrivateKeyAttrs: [kSecAttrIsPermanent: true, kSecAttrApplicationTag: tag,
+-                        kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly],
+-                ] as CFDictionary, &error) else { throw IncomingShareFailure.unavailable }
+-                key = created
+-            } else { throw IncomingShareFailure.unavailable }
+-            guard let publicKey = SecKeyCopyPublicKey(key), let bytes = SecKeyCopyExternalRepresentation(publicKey, nil) as Data? else {
+-                throw IncomingShareFailure.unavailable
++        return (groupRoot.appendingPathComponent("inbox", isDirectory: true),
++                groupRoot.appendingPathComponent("ingress-public-key-v2"))
++    }
++
++    #if !CHUR_SHARE_EXTENSION
++    static func recipientPublicKey(for seed: SymmetricKey) throws -> Data {
++        guard seed.bitCount == 256 else { throw IncomingShareFailure.invalid }
++        var bytes = Data(count: Int(CHUR_INBOX_PUBLIC_LEN))
++        let status = bytes.withUnsafeMutableBytes { output in
++            seed.withUnsafeBytes { input in
++                chur_inbox_public(input.bindMemory(to: UInt8.self).baseAddress,
++                                  output.bindMemory(to: UInt8.self).baseAddress)
++            }
++        }
++        guard status == 0 else { throw IncomingShareFailure.unavailable }
++        return bytes
++    }
++
++    private static func receivingSeed() throws -> SymmetricKey {
++        let identity: [CFString: Any] = [
++            kSecClass: kSecClassGenericPassword, kSecAttrService: "dev.po4yka.chur.incoming",
++            kSecAttrAccount: "xwing-v2", kSecAttrSynchronizable: false,
++        ]
++        var query = identity
++        query[kSecReturnData] = true
++        func load() throws -> SymmetricKey? {
++            var result: CFTypeRef?
++            let status = SecItemCopyMatching(query as CFDictionary, &result)
++            if status == errSecItemNotFound { return nil }
++            guard status == errSecSuccess, var bytes = result as? Data,
++                  bytes.count == Int(CHUR_INBOX_SEED_LEN) else { throw IncomingShareFailure.unavailable }
++            defer { bytes.resetBytes(in: 0..<bytes.count) }
++            return SymmetricKey(data: bytes)
++        }
++        if let key = try load() { return key }
++        let key = SymmetricKey(size: .bits256)
++        var bytes = key.withUnsafeBytes { Data($0) }
++        defer { bytes.resetBytes(in: 0..<bytes.count) }
++        var add = identity
++        add[kSecAttrAccessible] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
++        add[kSecValueData] = bytes
++        let status = SecItemAdd(add as CFDictionary, nil)
++        if status == errSecDuplicateItem, let existing = try load() { return existing }
++        guard status == errSecSuccess else { throw IncomingShareFailure.unavailable }
++        return key
++    }
++
++    static func openForApplication() throws -> IncomingShareInbox {
++        let paths = try groupPaths()
++        let key = try receivingSeed()
++        let bytes = try recipientPublicKey(for: key)
++        try bytes.write(to: paths.publicKey, options: [.atomic, .completeFileProtection])
++        try (paths.publicKey as NSURL).setResourceValue(true, forKey: .isExcludedFromBackupKey)
++        return try IncomingShareInbox(root: paths.root, publicKey: bytes, privateKey: key)
++    }
++    #endif
++
++    static func openForExtension() throws -> IncomingShareInbox {
++        let paths = try groupPaths()
++        let fd = Darwin.open(paths.publicKey.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
++        guard fd >= 0 else { throw IncomingShareFailure.unavailable }
++        let input = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
++        defer { try? input.close() }
++        var stat = Darwin.stat()
++        guard fstat(fd, &stat) == 0, stat.st_mode & S_IFMT == S_IFREG,
++              stat.st_size == Int64(CHUR_INBOX_PUBLIC_LEN) else { throw IncomingShareFailure.unavailable }
++        let bytes = try exact(Int(CHUR_INBOX_PUBLIC_LEN), from: input)
++        guard try input.read(upToCount: 1)?.isEmpty != false else { throw IncomingShareFailure.unavailable }
++        return try IncomingShareInbox(root: paths.root, publicKey: bytes)
++    }
++
++    private func seal(_ key: SymmetricKey) throws -> Data {
++        var envelope = Data(count: Int(CHUR_INBOX_ENVELOPE_LEN))
++        let status = envelope.withUnsafeMutableBytes { output in
++            publicKey.withUnsafeBytes { recipient in
++                key.withUnsafeBytes { secret in
++                    chur_inbox_seal(recipient.bindMemory(to: UInt8.self).baseAddress,
++                                    secret.bindMemory(to: UInt8.self).baseAddress,
++                                    output.bindMemory(to: UInt8.self).baseAddress)
++                }
+             }
+-            try bytes.write(to: publicURL, options: .atomic)
+-            try (publicURL as NSURL).setResourceValue(true, forKey: .isExcludedFromBackupKey)
+-            return try IncomingShareInbox(root: root, publicKey: publicKey, privateKey: key)
+         }
+-        let bytes = try Data(contentsOf: publicURL, options: .mappedIfSafe)
+-        guard bytes.count <= 1024, let key = SecKeyCreateWithData(bytes as CFData,
+-            [kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeyClass: kSecAttrKeyClassPublic,
+-             kSecAttrKeySizeInBits: 2048] as CFDictionary, nil) else { throw IncomingShareFailure.unavailable }
+-        return try IncomingShareInbox(root: root, publicKey: key)
++        guard status == 0 else { throw IncomingShareFailure.unavailable }
++        return envelope
+     }
+ 
+     private func locked<T>(_ body: () throws -> T) throws -> T {
+@@ -158,7 +214,7 @@ final class IncomingShareInbox: @unchecked Sendable {
+                     guard used <= Self.totalLimit else { throw IncomingShareFailure.limit }
+                 }
+             }
+-            let overhead: Int64 = (size / Int64(Self.chunkSize) + 1) * 32 + 8192
++            let overhead: Int64 = (size / Int64(Self.chunkSize) + 2) * 32 + 8192 + Int64(Self.magic.count) + Int64(CHUR_INBOX_ENVELOPE_LEN)
+             guard size >= 0, size <= Self.entryLimit, size <= Self.totalLimit - used - overhead else { throw IncomingShareFailure.limit }
+             // Provider names are untrusted. A single Swift Character can contain
+             // thousands of combining scalars; bound UTF-8 bytes, not graphemes.
+@@ -166,12 +222,7 @@ final class IncomingShareInbox: @unchecked Sendable {
+             let cleanType = String(decoding: contentType.utf8.prefix(256), as: UTF8.self)
+             let meta = Metadata(name: cleanName.isEmpty ? "Shared file" : cleanName, contentType: cleanType, size: size)
+             let key = SymmetricKey(size: .bits256)
+-            var keyBytes = key.withUnsafeBytes { Data($0) }
+-            defer { keyBytes.resetBytes(in: 0..<keyBytes.count) }
+-            guard let wrapped = SecKeyCreateEncryptedData(publicKey, .rsaEncryptionOAEPSHA256, keyBytes as CFData, nil) as Data?, wrapped.count == 256 else {
+-                throw IncomingShareFailure.unavailable
+-            }
+-            let header = Self.magic + wrapped
++            let header = try Self.magic + seal(key)
+             let output = batch.appendingPathComponent(String(format: "%03d", own.count) + ".cipher")
+             let fd = Darwin.open(output.path, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, S_IRUSR | S_IWUSR)
+             guard fd >= 0 else { throw IncomingShareFailure.unavailable }
+@@ -219,6 +270,7 @@ final class IncomingShareInbox: @unchecked Sendable {
+         }
+         return result
+     }
++    #if !CHUR_SHARE_EXTENSION
+     private static func readFrame(from reader: FileHandle, key: SymmetricKey, aad: Data, limit: Int) throws -> Data {
+         let size = try exact(4, from: reader).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+         guard size >= 28, size <= limit + 28 else { throw IncomingShareFailure.invalid }
+@@ -231,10 +283,23 @@ final class IncomingShareInbox: @unchecked Sendable {
+         guard fd >= 0 else { throw IncomingShareFailure.invalid }
+         let reader = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+         do {
+-            let header = try Self.exact(264, from: reader)
+-            guard header.prefix(8) == Self.magic,
+-                var bytes = SecKeyCreateDecryptedData(privateKey, .rsaEncryptionOAEPSHA256, header.suffix(256) as CFData, nil) as Data?, bytes.count == 32 else { throw IncomingShareFailure.invalid }
+-            let key = SymmetricKey(data: bytes); bytes.resetBytes(in: 0..<bytes.count)
++            let version = try Self.exact(Self.magic.count, from: reader)
++            guard version == Self.magic else { throw IncomingShareFailure.invalid }
++            let envelope = try Self.exact(Int(CHUR_INBOX_ENVELOPE_LEN), from: reader)
++            let header = version + envelope
++            var bytes = Data(count: Int(CHUR_INBOX_KEY_LEN))
++            defer { bytes.resetBytes(in: 0..<bytes.count) }
++            let status = bytes.withUnsafeMutableBytes { output in
++                privateKey.withUnsafeBytes { seed in
++                    envelope.withUnsafeBytes { input in
++                        chur_inbox_open(seed.bindMemory(to: UInt8.self).baseAddress,
++                                        input.bindMemory(to: UInt8.self).baseAddress,
++                                        output.bindMemory(to: UInt8.self).baseAddress)
++                    }
++                }
++            }
++            guard status == 0 else { throw IncomingShareFailure.invalid }
++            let key = SymmetricKey(data: bytes)
+             var metadataBytes = try Self.readFrame(from: reader, key: key, aad: header + Self.number(0), limit: 8192)
+             defer { metadataBytes.resetBytes(in: 0..<metadataBytes.count) }
+             let meta = try JSONDecoder().decode(Metadata.self, from: metadataBytes)
+@@ -308,4 +373,5 @@ final class IncomingShareInbox: @unchecked Sendable {
+             if metadata.size == 0 { guard try handle.read(upToCount: 1)?.isEmpty != false else { throw IncomingShareFailure.invalid } }
+         }
+     }
++    #endif
+ }
+diff --git a/apps/iosApp/Tests/IncomingShareInboxTests.swift b/apps/iosApp/Tests/IncomingShareInboxTests.swift
+index 6d8e24c8..83cd1417 100644
+--- a/apps/iosApp/Tests/IncomingShareInboxTests.swift
++++ b/apps/iosApp/Tests/IncomingShareInboxTests.swift
+@@ -1,6 +1,6 @@
+ import Darwin
+ import Foundation
+-import Security
++import CryptoKit
+ import XCTest
+ @testable import ChurScratch
+ 
+@@ -9,10 +9,9 @@ final class IncomingShareInboxTests: XCTestCase {
+     private var inbox: IncomingShareInbox!
+     override func setUpWithError() throws {
+         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+-        let key = try XCTUnwrap(SecKeyCreateRandomKey([kSecAttrKeyType: kSecAttrKeyTypeRSA,
+-            kSecAttrKeySizeInBits: 2048] as CFDictionary, nil))
++        let key = SymmetricKey(size: .bits256)
+         inbox = try IncomingShareInbox(root: root.appendingPathComponent("inbox"),
+-            publicKey: XCTUnwrap(SecKeyCopyPublicKey(key)), privateKey: key)
++            publicKey: IncomingShareInbox.recipientPublicKey(for: key), privateKey: key)
+     }
+     override func tearDownWithError() throws { try FileManager.default.removeItem(at: root) }
+     private func ready(_ data: Data) throws -> URL {
+@@ -74,7 +73,7 @@ final class IncomingShareInboxTests: XCTestCase {
+         func length(_ at: Int) -> Int {
+             original[at..<(at + 4)].reduce(0) { ($0 << 8) | Int($1) }
+         }
+-        let first = 264 + 4 + length(264)
++        let first = 1176 + 4 + length(1176)
+         let second = first + 4 + length(first)
+         let firstFrame = original[first..<second]
+         let secondFrame = original[second..<original.count]
+@@ -131,10 +130,46 @@ final class IncomingShareInboxTests: XCTestCase {
+         }
+     }
+ 
+-    func testWriteOnlyExtensionCannotReadEnvelope() throws {
+-        let batch = try ready(Data([9]))
+-        let key = try XCTUnwrap(SecKeyCreateRandomKey([kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeySizeInBits: 2048] as CFDictionary, nil))
+-        let extensionInbox = try IncomingShareInbox(root: inbox.root, publicKey: XCTUnwrap(SecKeyCopyPublicKey(key)))
+-        XCTAssertThrowsError(try extensionInbox.open(XCTUnwrap(inbox.entries(batch).first)))
++    func testOpensGoRecipientEnvelope() throws {
++        let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
++            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
++        let vectors = repository.appendingPathComponent("test-vectors/internal-pq")
++        let recipient = try Data(contentsOf: vectors.appendingPathComponent("recipient-public.bin"))
++        let envelope = try Data(contentsOf: vectors.appendingPathComponent("inbox-envelope.bin"))
++        let seed = SymmetricKey(data: Data(repeating: 0x42, count: 32))
++        XCTAssertEqual(try IncomingShareInbox.recipientPublicKey(for: seed), recipient)
++        inbox = try IncomingShareInbox(root: inbox.root, publicKey: recipient, privateKey: seed)
++        let header = Data("CHURIN02".utf8) + envelope
++        let metadata = Data(#"{"name":"go.txt","contentType":"text/plain","size":0}"#.utf8)
++        let sealed = try XCTUnwrap(AES.GCM.seal(metadata,
++            using: SymmetricKey(data: Data(repeating: 0xa5, count: 32)),
++            authenticating: header + Data(repeating: 0, count: 4)).combined)
++        var count = UInt32(sealed.count).bigEndian
++        let length = withUnsafeBytes(of: &count) { Data($0) }
++        let file = root.appendingPathComponent("go.cipher")
++        try (header + length + sealed).write(to: file)
++        let (meta, data) = try consume(file)
++        XCTAssertEqual(meta.name, "go.txt")
++        XCTAssertTrue(data.isEmpty)
++    }
++
++    func testExtensionWritesForAppAndCannotOpenTheEnvelope() throws {
++        let key = SymmetricKey(size: .bits256)
++        let publicKey = try IncomingShareInbox.recipientPublicKey(for: key)
++        let extensionInbox = try IncomingShareInbox(root: inbox.root, publicKey: publicKey)
++        let batch = try extensionInbox.begin()
++        try extensionInbox.appendText("sealed from extension", name: "note", to: batch, shouldContinue: { true })
++        try extensionInbox.finish(batch)
++        let file = try XCTUnwrap(inbox.entries(XCTUnwrap(inbox.pending().first)).first)
++        XCTAssertThrowsError(try extensionInbox.open(file))
++        XCTAssertThrowsError(try inbox.open(file))
++        inbox = try IncomingShareInbox(root: inbox.root, publicKey: publicKey, privateKey: key)
++        XCTAssertEqual(try consume(file).1, Data("sealed from extension".utf8))
++
++        var old = try Data(contentsOf: file)
++        XCTAssertEqual(old.prefix(8), Data("CHURIN02".utf8))
++        old.replaceSubrange(0..<8, with: "CHURIN01".utf8)
++        try old.write(to: file)
++        XCTAssertThrowsError(try consume(file))
+     }
+ }
+diff --git a/apps/iosApp/Tests/IncomingShareSelectionTests.swift b/apps/iosApp/Tests/IncomingShareSelectionTests.swift
+index 08da6074..e020fb60 100644
+--- a/apps/iosApp/Tests/IncomingShareSelectionTests.swift
++++ b/apps/iosApp/Tests/IncomingShareSelectionTests.swift
+@@ -1,6 +1,6 @@
+ import Darwin
+ import Foundation
+-import Security
++import CryptoKit
+ import XCTest
+ @testable import ChurScratch
+ 
+@@ -10,8 +10,9 @@ final class IncomingShareSelectionTests: XCTestCase {
+     private var scratch: URL!
+     override func setUpWithError() throws {
+         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+-        let key = try XCTUnwrap(SecKeyCreateRandomKey([kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeySizeInBits: 2048] as CFDictionary, nil))
+-        inbox = try IncomingShareInbox(root: root.appendingPathComponent("inbox"), publicKey: XCTUnwrap(SecKeyCopyPublicKey(key)), privateKey: key)
++        let key = SymmetricKey(size: .bits256)
++        inbox = try IncomingShareInbox(root: root.appendingPathComponent("inbox"),
++            publicKey: IncomingShareInbox.recipientPublicKey(for: key), privateKey: key)
+         scratch = root.appendingPathComponent("scratch")
+         try IncomingShareSelection.prepareScratch(scratch)
+     }
+diff --git a/apps/iosApp/project.yml b/apps/iosApp/project.yml
+index 6f9d09a9..a47030ad 100644
+--- a/apps/iosApp/project.yml
++++ b/apps/iosApp/project.yml
+@@ -68,6 +68,7 @@ targets:
+         TARGETED_DEVICE_FAMILY: "1,2"
+         SWIFT_VERSION: "5.0"
+         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) CHUR_FILAMENT"
++        SWIFT_INCLUDE_PATHS: "$(inherited) $(SRCROOT)/InboxNative"
+         SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/SpiritRenderer/ChurSpirit-Bridging-Header.h"
+         HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/SpiritRenderer/.vendor/filament/include"
+         CLANG_CXX_LANGUAGE_STANDARD: c++17
+@@ -133,6 +134,11 @@ targets:
+     settings:
+       base:
+         PRODUCT_BUNDLE_IDENTIFIER: dev.po4yka.chur.share
++        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) CHUR_SHARE_EXTENSION"
++        SWIFT_INCLUDE_PATHS: "$(inherited) $(SRCROOT)/InboxNative"
++        OTHER_LDFLAGS: "$(inherited) $(DERIVED_FILE_DIR)/libchur_ffi.a -framework Security"
++        DEAD_CODE_STRIPPING: YES
++        ENABLE_USER_SCRIPT_SANDBOXING: NO
+         CODE_SIGN_ENTITLEMENTS: IncomingShare.entitlements
+         APPLICATION_EXTENSION_API_ONLY: YES
+         SKIP_INSTALL: YES
+@@ -141,6 +147,15 @@ targets:
+         SWIFT_VERSION: "5.0"
+         CODE_SIGNING_ALLOWED: NO
+ 
++    preBuildScripts:
++      - name: Stage inbox static library
++        basedOnDependencyAnalysis: false
++        script: |
++          set -euo pipefail
++          archive=$("$SRCROOT/build-inbox.sh" "$PLATFORM_NAME")
++          mkdir -p "$DERIVED_FILE_DIR"
++          ditto "$archive" "$DERIVED_FILE_DIR/libchur_ffi.a"
++
+   ChurUITests:
+     type: bundle.ui-testing
+     platform: iOS

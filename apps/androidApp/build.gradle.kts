@@ -24,6 +24,9 @@ val androidAbis =
         "x86_64" to "x86_64-linux-android",
     )
 
+val releaseVaultTest = providers.gradleProperty("churReleaseVaultTest").orNull == "true"
+if (releaseVaultTest) layout.buildDirectory.set(layout.projectDirectory.dir("build/release-vault-test"))
+
 android {
     namespace = "dev.po4yka.chur.android"
     compileSdk =
@@ -47,7 +50,11 @@ android {
                 .toInt()
         versionCode = 1
         versionName = "0.1.0"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = if (releaseVaultTest) {
+            "dev.po4yka.chur.android.ClassicalVaultReleaseTest"
+        } else {
+            "androidx.test.runner.AndroidJUnitRunner"
+        }
         ndk.abiFilters += androidAbis.keys
     }
 
@@ -55,7 +62,21 @@ android {
         compose = true
     }
 
-    sourceSets.getByName("androidTest").assets.srcDir(rootProject.file("tests/media"))
+    if (releaseVaultTest) {
+        testBuildType = "release"
+        sourceSets.getByName("androidTest").apply {
+            setRoot("src/releaseVaultTest")
+            assets.srcDir(rootProject.file("test-vectors/compatibility/classical-vault"))
+        }
+        testOptions.managedDevices.localDevices.create("classicalVaultApi35") {
+            device = "Pixel 6"
+            sdkVersion = 35
+            systemImageSource = "google"
+            require64Bit = true
+        }
+    } else {
+        sourceSets.getByName("androidTest").assets.srcDir(rootProject.file("tests/media"))
+    }
 
     signingConfigs {
         create("release") {

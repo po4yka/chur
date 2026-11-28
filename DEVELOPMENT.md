@@ -56,6 +56,30 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for module ownership. There i
 
 Use `./gradlew --version`, `rustup show` from `rust/`, and `xcodebuild -version` to check the selected tools. `ANDROID_HOME` identifies the SDK. Set `ANDROID_NDK_HOME` for the native script if more than one NDK is installed; Gradle uses the catalog pin.
 
+## Internal post-quantum build
+
+Normal Gradle, Cargo and Xcode commands use the classical profile and native ABI 7.4. Use the following command from the checkout root for the internal profile. Each invocation needs a new directory with an existing parent. Choose a sibling of the checkout or an empty path under a temporary directory.
+
+```text
+scripts/build-internal-pq.sh prepare NEW_DIRECTORY
+scripts/build-internal-pq.sh test NEW_DIRECTORY
+scripts/build-internal-pq.sh android NEW_DIRECTORY
+scripts/build-internal-pq.sh ios NEW_DIRECTORY
+```
+
+The script copies the current working-tree contents of tracked files, applies the internal source and vector changes, and adds the internal files in the destination. The source checkout stays available for ordinary builds. Untracked files, including SDK settings and signing credentials, are outside the snapshot. Set the SDK environment variables from Initial setup. The script stops if the destination already exists or if an internal change no longer applies to the copied sources.
+
+| Command | Result in the new directory |
+|---|---|
+| `prepare` | A source tree ready for inspection or native builds. |
+| `test` | The Rust workspace tests, release C ABI handshake and CLI vector verification. Cargo writes the build output under `rust/target/`. |
+| `android` | A Debug APK under `apps/androidApp/build/outputs/apk/debug/`. |
+| `ios` | An ad-hoc signed iOS Simulator Debug app and its UI tests under `build/xcode/Build/Products/Debug-iphonesimulator/`. |
+
+After the `ios` build, run `NEW_DIRECTORY/apps/iosApp/test-share-simulator.sh` to send a file through the system Share sheet and read its contents in the internal vault. The check uses a disposable simulator.
+
+Both internal apps use `dev.po4yka.chur.pqinternal`, native ABI 8.4 and a new vault. Use the ordinary application for historical vaults. Keep test measurements with the source revision, build profile, ABI and target device. [Profile decision](docs/adr/0073-internal-post-quantum-profile.md) · [Release checks](docs/assurance/RELEASE_GATES.md#internal-post-quantum-profile)
+
 ## Build commands
 
 The `:shared:app` and `:shared:feature-import` iOS tests use Apple Vision, ImageIO, and the system type registry. They need a fully booted simulator. A standalone simulator process can return no text or fail to resolve a registered media type without an API error. CI creates, boots, and removes its own compatible iPhone simulator. For a local run, boot a simulator that you own and set `CHUR_IOS_TEST_DEVICE` to its UDID. The build does not change the state of existing devices. Without this variable, Gradle uses its normal Xcode-selected device, which must already be booted.
@@ -99,15 +123,7 @@ cargo run --locked -p chur-cli -- vectors digest --dir ../test-vectors/v1
 (cd fuzz && cargo +nightly fuzz run <target> -- -runs=20000)
 ```
 
-The `cargo` commands run in `rust/`; `cargo fuzz` runs in `rust/fuzz/`. The Gradle commands and scripts run at the repository root. The C ABI harness is built and run by the `abi` job. Its Linux command is:
-
-```text
-cargo build --locked -p chur-ffi --release
-cc -Wall -Wextra -Werror -I crates/chur-ffi/include \
-   crates/chur-ffi/tests/handshake.c target/release/libchur_ffi.a \
-   -lpthread -ldl -lm -o handshake
-./handshake
-```
+The `cargo` commands run in `rust/`; `cargo fuzz` runs in `rust/fuzz/`. The Gradle commands and scripts run at the repository root. Both the ordinary `abi` job and the internal `test` build compile and run the C ABI harness against their own release library and header. Run `scripts/check-c-abi.sh` from the source tree for the selected profile.
 
 ### Mobile runtime and Swift checks
 

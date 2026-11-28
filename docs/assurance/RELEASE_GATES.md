@@ -25,6 +25,12 @@ Files, private notes, selective archives, external encryption, OCR, public camer
 
 [Development](../../DEVELOPMENT.md) gives local checks. CI does not execute Android instrumentation. Physical-device provider, key-slot, camera, performance, and interoperability checks remain separate.
 
+## Internal post-quantum profile
+
+The ordinary Android and iOS release uses native ABI 7.4. Verify its startup and historical vault access with the ordinary release artifacts and the [classical vault fixture](../../test-vectors/compatibility/classical-vault/README.md). Record each platform result separately. The isolated internal applications use native ABI 8.4, the internal flavor bit and a distinct application ID. They require a new vault.
+
+Before a public PQ profile is frozen, record the final hybrid HPKE specification and its errata, the exact cryptographic dependencies and the results from independent vectors for those versions. On physical Android and iPhone devices, test enrollment in both directions, grant exchange, history delivery, revocation, backup recovery and iOS incoming shares. Include the minimum supported OS versions. Measure cold and warm latency, memory, installed size and verification payload size. An external cryptographic audit is optional for this profile. The maintainer records its status and the evidence for any public claim. [Internal build](../../DEVELOPMENT.md#internal-post-quantum-build) · [Prototype evidence and open device checks](../adr/0073-internal-post-quantum-profile.md#prototype-verification)
+
 ## Gate 0 — design prototype
 
 Permitted:

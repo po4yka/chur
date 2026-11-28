@@ -21,6 +21,7 @@
 		4FB9013AB3AFF801C3D4AC88 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 296C52EB4727BD6B2C9F02B6 /* InfoPlist.strings */; };
 		5E2A781CF29AA242C39DCFFB /* ScratchCopy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3B19C20AB1C110C0E63735C /* ScratchCopy.swift */; };
 		66315BC5A8904169C52C47C6 /* PublicCamera.swift in Sources */ = {isa = PBXBuildFile; fileRef = A78EC5913FC317057CE38C63 /* PublicCamera.swift */; };
+		6A62BB10C3DEC8EE4658511F /* ClassicalVaultTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9376B8DAC162FC5C7EF8029B /* ClassicalVaultTests.swift */; };
 		76E3C117A8D81A188D530B17 /* MediaOriginalSafety.swift in Sources */ = {isa = PBXBuildFile; fileRef = C50431BC72A0E54BEFAA66B6 /* MediaOriginalSafety.swift */; };
 		77C5071DC9BEA572B58E44E4 /* chur_interactive_fallback.png in Resources */ = {isa = PBXBuildFile; fileRef = 82DEFD1533C8F69CCCB91E43 /* chur_interactive_fallback.png */; };
 		7C94102E1C76186046074AD9 /* LivePhotoBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5235F344B939BDEBA1EA9D9 /* LivePhotoBundle.swift */; };
@@ -55,6 +56,13 @@
 			remoteGlobalIDString = 1B8B7D65C8F07C4A4FF1E912;
 			remoteInfo = ChurShare;
 		};
+		BD186D8F4A54032327E40896 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 56E1AB31EB5545454BADF3E5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2FB0527B103A0CA26BE121D7;
+			remoteInfo = Chur;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -84,6 +92,7 @@
 		3D41FE4B976ECDB0CD0B95C4 /* chur_interactive.glb */ = {isa = PBXFileReference; path = chur_interactive.glb; sourceTree = "<group>"; };
 		54011D80B1E89DCF9EAF135C /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = ru.lproj/Localizable.strings; sourceTree = "<group>"; };
 		585146D2614423BAEC21F11B /* DirectoryExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectoryExport.swift; sourceTree = "<group>"; };
+		5C3C16FD909C3328A6C75764 /* ChurCompatibilityTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ChurCompatibilityTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5D4757613DACDFC38CB949AB /* IncomingShareInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomingShareInbox.swift; sourceTree = "<group>"; };
 		6F7130D48FBEA04E2DF3740B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		82DEFD1533C8F69CCCB91E43 /* chur_interactive_fallback.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = chur_interactive_fallback.png; sourceTree = "<group>"; };
@@ -91,6 +100,7 @@
 		8C652D17A053110BD2DA9F40 /* Chur.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Chur.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8D605A910B70BFA7B7347E6E /* SpiritScene.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SpiritScene.cpp; sourceTree = "<group>"; };
 		914378E25A178D10F1C4DD60 /* ChurUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ChurUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		9376B8DAC162FC5C7EF8029B /* ClassicalVaultTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClassicalVaultTests.swift; sourceTree = "<group>"; };
 		93D8AD54F431A1D0025327D0 /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = ru.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		943953785577937258479D09 /* filament-THIRD-PARTY-NOTICES */ = {isa = PBXFileReference; path = "filament-THIRD-PARTY-NOTICES"; sourceTree = "<group>"; };
 		9FFD1F5028336D1A75EA2CEE /* ChurShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ChurShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -135,6 +145,7 @@
 				BA457393957CC3760250CA00 /* Assets.xcassets */,
 				EFDC0B868EDA090EE69D45E3 /* ChurMirror.icon */,
 				1879E92973E7D404D7E0C046 /* UtilityPet.icon */,
+				8EDF6DEA6616F5D03FA4AE77 /* CompatibilityTests */,
 				DBFE6C23E409D4E4AD7F9C8C /* Resources */,
 				589BA454C8350C8720674B2C /* ShareExtension */,
 				02A8F559F87009166EBB3A44 /* Sources */,
@@ -148,6 +159,7 @@
 			isa = PBXGroup;
 			children = (
 				8C652D17A053110BD2DA9F40 /* Chur.app */,
+				5C3C16FD909C3328A6C75764 /* ChurCompatibilityTests.xctest */,
 				9FFD1F5028336D1A75EA2CEE /* ChurShare.appex */,
 				914378E25A178D10F1C4DD60 /* ChurUITests.xctest */,
 			);
@@ -169,6 +181,14 @@
 				875D1A98DA0F6D353EA2C2F6 /* ShareViewController.swift */,
 			);
 			path = ShareExtension;
+			sourceTree = "<group>";
+		};
+		8EDF6DEA6616F5D03FA4AE77 /* CompatibilityTests */ = {
+			isa = PBXGroup;
+			children = (
+				9376B8DAC162FC5C7EF8029B /* ClassicalVaultTests.swift */,
+			);
+			path = CompatibilityTests;
 			sourceTree = "<group>";
 		};
 		AFF36476404E44049DBEC30E /* SpiritRenderer */ = {
@@ -262,6 +282,24 @@
 			productReference = 8C652D17A053110BD2DA9F40 /* Chur.app */;
 			productType = "com.apple.product-type.application";
 		};
+		571E0FE738C7CB05FAD9A961 /* ChurCompatibilityTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0704E3D17A9D82AAB275F6BA /* Build configuration list for PBXNativeTarget "ChurCompatibilityTests" */;
+			buildPhases = (
+				A665AA4AE5CB05FA68F93608 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				BC048957503B4170A2CE4AAD /* PBXTargetDependency */,
+			);
+			name = ChurCompatibilityTests;
+			packageProductDependencies = (
+			);
+			productName = ChurCompatibilityTests;
+			productReference = 5C3C16FD909C3328A6C75764 /* ChurCompatibilityTests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -269,9 +307,12 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 1430;
+				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					094828045A80571C816D07DD = {
+						TestTargetID = 2FB0527B103A0CA26BE121D7;
+					};
+					571E0FE738C7CB05FAD9A961 = {
 						TestTargetID = 2FB0527B103A0CA26BE121D7;
 					};
 				};
@@ -294,6 +335,7 @@
 				2FB0527B103A0CA26BE121D7 /* Chur */,
 				1B8B7D65C8F07C4A4FF1E912 /* ChurShare */,
 				094828045A80571C816D07DD /* ChurUITests */,
+				571E0FE738C7CB05FAD9A961 /* ChurCompatibilityTests */,
 			);
 		};
 /* End PBXProject section */
@@ -364,6 +406,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A665AA4AE5CB05FA68F93608 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6A62BB10C3DEC8EE4658511F /* ClassicalVaultTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		F3612FA111273F5F19BFA0FB /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -394,6 +444,11 @@
 			isa = PBXTargetDependency;
 			target = 1B8B7D65C8F07C4A4FF1E912 /* ChurShare */;
 			targetProxy = BC70E18A77AC3A88226934E6 /* PBXContainerItemProxy */;
+		};
+		BC048957503B4170A2CE4AAD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2FB0527B103A0CA26BE121D7 /* Chur */;
+			targetProxy = BD186D8F4A54032327E40896 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -662,6 +717,46 @@
 			};
 			name = Release;
 		};
+		DCD4AF971D166E4FCA2D7512 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.po4yka.chur.compatibilitytests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Chur;
+			};
+			name = Release;
+		};
+		DEDF3683F0E5506E7CA861F1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.po4yka.chur.compatibilitytests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Chur;
+			};
+			name = Debug;
+		};
 		EF7F0DFC80D19904A4BCDB1D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -685,6 +780,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		0704E3D17A9D82AAB275F6BA /* Build configuration list for PBXNativeTarget "ChurCompatibilityTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DEDF3683F0E5506E7CA861F1 /* Debug */,
+				DCD4AF971D166E4FCA2D7512 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		2566466B1AF05526D5985B02 /* Build configuration list for PBXNativeTarget "Chur" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

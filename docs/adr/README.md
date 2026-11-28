@@ -120,6 +120,7 @@ An ADR uses the document-status vocabulary defined once in [`../README.md`](../R
 | [0069](0069-re-encrypt-objects-after-revocation.md) | Delete superseded envelopes and re-encrypt objects after a revocation | Accepted |
 | [0070](0070-public-utilities-and-configured-entry.md) | Public utilities and configured entry | Accepted |
 | [0072](0072-judge-retention-by-a-trusted-time-mark.md) | Judge trash and note retention by a trusted-time mark | Accepted |
+| [0073](0073-internal-post-quantum-profile.md) | Use a mandatory post-quantum profile for the internal prototype | Experimental |
 
 Rows are ordered by ADR number. Number 0015 was not used; no ADR carries it and none will.
 

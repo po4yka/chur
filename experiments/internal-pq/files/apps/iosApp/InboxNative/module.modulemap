@@ -1,0 +1,4 @@
+module ChurInboxNative {
+    header "chur_inbox.h"
+    export *
+}

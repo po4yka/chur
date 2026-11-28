@@ -4,6 +4,8 @@
 
 The FFI boundary exposes coarse-grained vault operations without making Kotlin, Swift, JNI, Objective-C, UniFFI, or Gobley part of the private storage protocol.
 
+This contract describes the ordinary Android and iOS applications and native ABI 7.4. The isolated internal build has its own binary record sizes and native ABI 8.4. [Internal ABI supplement](FFI_INTERNAL_PQ.md)
+
 ## 1. Layers
 
 ```text

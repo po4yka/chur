@@ -1800,6 +1800,8 @@ A former member who already obtained an object key keeps access only to cipherte
 
 ## 56. Post-quantum readiness
 
+The ordinary release uses the classical profile specified here. The isolated internal application uses a separate vault policy and native ABI 8.4. It implements hybrid key encapsulation and ML-DSA-65 signatures. Existing classical vaults stay in the ordinary app. [Internal profile and release decision](adr/0073-internal-post-quantum-profile.md)
+
 Bulk media encryption already uses 256-bit symmetric keys and does not require an immediate post-quantum replacement.
 
 Post-quantum concerns primarily affect:
@@ -1811,14 +1813,14 @@ Post-quantum concerns primarily affect:
 
 The protocol registry MUST allow future recipient types such as a hybrid X25519 plus ML-KEM construction without changing media chunks or object keys.
 
-No post-quantum KEM or signature is part of Chur v1. Adding one requires:
+For a public post-quantum profile, the maintainer records the following evidence.
 
 - a standardized construction;
 - hybrid-composition review;
 - larger-key and ciphertext benchmarks;
 - mobile implementation review;
 - test vectors;
-- independent audit.
+- the external audit status. ADR-0073 makes an external cryptographic audit optional for that profile.
 
 ---
 

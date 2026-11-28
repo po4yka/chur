@@ -226,6 +226,10 @@ iOS adds nothing: `AVFoundation` is part of the platform, and the resource-loade
 - **Footprint:** a dev-dependency only, so it never enters a library, an FFI artifact, or an app. Default features are off and only `std` is on: no process fork, timeout thread, or temp-file graph. It adds `rand`, `rand_xorshift`, `regex-syntax`, `unarray`, and `core_detect` to the test graph. No `unsafe` code of ours, no build script, no network access.
 - **Update and removal:** Dependabot updates it with the cargo group. Removal deletes the test file and the dev-dependency.
 
+### Dependencies in the isolated post-quantum build
+
+The internal Rust build enables the `mlkem` feature of `hpke` 0.15.1 and adds `ml-dsa` 0.1.2 with zeroization. Its lockfile pins `x-wing` 0.1.1, `ml-kem` 0.3.4 and `module-lattice` 0.2.4. Preserve their MIT or Apache-2.0 license notices. The pure Rust implementations work with the iOS 18 deployment target. A dependency update requires advisory, feature and license review, independent vectors, and builds on the supported mobile targets. The published `x-wing` and `ml-dsa` implementations report that they have not had an independent audit. [Dependency decision](adr/0073-internal-post-quantum-profile.md#dependencies-and-release-decision)
+
 ## Cargo features
 
 Disable default features unless they are understood. Features that add platform key access, network clients, file-system traversal, dynamic loading, serialization formats, or native libraries require review.
